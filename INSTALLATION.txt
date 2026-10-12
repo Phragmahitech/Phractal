@@ -1,0 +1,44 @@
+Phractal by Phragma - installation
+==================================
+
+macOS (Apple Silicon et Intel, macOS 10.13 ou plus recent)
+----------------------------------------------------------
+1. Copie "Phractal.vst3" dans :
+       /Library/Audio/Plug-Ins/VST3/
+   (Finder > menu Aller > Aller au dossier... > colle ce chemin)
+   Ne garde qu'UNE copie du plugin : s'il en reste une autre dans
+   ~/Library/Audio/Plug-Ins/VST3/, le DAW peut charger l'ancienne version.
+
+2. Le plugin n'est pas notarise par Apple : macOS le bloque tant que tu n'as pas
+   retire le marqueur de telechargement. Ouvre l'app Terminal et lance :
+
+       xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/Phractal.vst3
+
+3. Relance ton DAW et rescanne les plugins.
+   Ableton Live : Reglages > Plug-Ins > active "Utiliser les dossiers systeme VST3", puis "Rescanner".
+
+
+Windows (64 bits)
+-----------------
+1. Copie le DOSSIER "Phractal.vst3" en entier dans :
+       C:\Program Files\Common Files\VST3\
+
+2. Relance ton DAW et rescanne les plugins.
+   Aucune installation supplementaire n'est necessaire.
+
+
+Utilisation
+-----------
+Phractal se pose en insert. Allume SLICE : a chaque pas de la mesure, un tirage
+au sort (la chance du pas, dessinee dans la rangee CHANCE) decide si le son qui
+entre est enregistre et rejoue en boucle jusqu'a la fin du pas. La longueur de
+la boucle est tiree entre MIN et MAX. Eteint, le son passe intact.
+
+SLICE    STEPS (1 a 32 pas par mesure), THRU (ce qui passe entre les slices),
+         ENVELOPE (attaque, declin, maintien, relachement de chaque slice).
+LOOP     MAX et MIN (SYNC : 1/1 a 1/4096 ; FREE : 1 s a 0,1 ms), RANDOM
+         (eteint : toujours MAX), TRIPLET / DOTTED (admis dans le tirage).
+         Une boucle tres courte devient une note.
+PITCH    Transpose les slices de -24 a +24 demi-tons (SEMI ou FREE).
+GATE     Gate rythmique : RATE, STEPS, LENGTH, SMOOTH ; motif dans la rangee GATE.
+FILTER   HP / BP / LP, 12 ou 24 dB, RESO. OUTPUT : MIX, LEVEL, LIMITER.
