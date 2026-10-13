@@ -27,19 +27,22 @@
     qu'environ 10 ms ne s'entend plus comme une répétition mais comme une note
     (hauteur = 1 / longueur).
 
-    Chaque slice passe dans une enveloppe ADSR étalée sur la durée du pas
-    (attaque, déclin et relâchement en part du pas, maintien en niveau) ; le
-    relâchement finit exactement à la fin du pas.
+    DURATION : la part du pas que dure la slice (5 à 100 %). Après, on entend
+    ce que THRU prévoit pour ce pas.
+
+    Chaque slice passe dans une enveloppe étalée sur sa durée (attaque, déclin
+    et relâchement en part de la slice, maintien en niveau) ; le relâchement
+    finit exactement à la fin de la slice.
 
     THRU : ce qu'on entend pendant les pas sans slice : rien, l'entrée, ou un
     tirage au sort (l'un ou l'autre) à chaque pas.
 
     PITCH : les slices (pas l'entrée qui passe en THRU) traversent le
-    pitch-shifter de Phragments, de -24 à +24 demi-tons, durée conservée. À 0,
-    rien n'est modifié.
+    pitch-shifter de Phragments, élargi à -48 / +48 demi-tons, durée
+    conservée. À 0, rien n'est modifié.
 
-    GATE : un gate rythmique de 2 à 32 pas, sur tout ce qui sort, avec
-    longueur d'ouverture et lissage.
+    GATE : un gate rythmique sur tout ce qui sort (un motif de 2 à 32 pas,
+    avec longueur d'ouverture et lissage).
 
     Les grilles suivent la position de l'hôte quand son transport tourne
     (tolérance de 2 échantillons) ; sinon elles avancent seules.
@@ -182,6 +185,12 @@ public:
     }
 
     void setThru (int mode) noexcept                    { thruMode = std::max (0, std::min (2, mode)); }
+
+    /** Part du pas que dure une slice (0,05 à 1). */
+    void setDuration (double fraction) noexcept
+    {
+        duration = std::isfinite (fraction) ? std::max (0.05, std::min (1.0, fraction)) : 1.0;
+    }
 
     /** Transposition des slices en demi-tons (0 = aucune). */
     void setPitch (double semitones) noexcept           { shifter.setSemitones (semitones); }
@@ -399,6 +408,12 @@ private:
         const bool hit = slicing && random() < (double) chances[step];
         const auto bit = (std::uint32_t) 1u << step;
 
+        // Ce qu'on entend sans slice (ou après elle, quand DURATION < 100 %).
+        const float thruHere = ! slicing ? 1.0f
+                             : thruMode == thruInput ? 1.0f
+                             : thruMode == thruRandom ? (random() < 0.5 ? 1.0f : 0.0f)
+                             : 0.0f;
+
         if (current.active)
         {
             previous = current;
@@ -416,16 +431,15 @@ private:
             current.gain = 1.0f;
             sliceActive = true;
             thruTarget = 0.0f;
+            thruAfter = thruHere;
+            sliceDuration = duration;
             lastLength.store (current.length, std::memory_order_relaxed);
             slicedMask.fetch_or (bit, std::memory_order_relaxed);
         }
         else
         {
             sliceActive = false;
-            thruTarget = ! slicing ? 1.0f
-                       : thruMode == thruInput ? 1.0f
-                       : thruMode == thruRandom ? (random() < 0.5 ? 1.0f : 0.0f)
-                       : 0.0f;
+            thruTarget = thruHere;
             slicedMask.fetch_and (~bit, std::memory_order_relaxed);
         }
 
@@ -480,6 +494,17 @@ private:
 
             const double phase = gridPos - (double) index;
 
+            // Fin de la slice avant la fin du pas (DURATION < 100 %) : on passe à ce que THRU prévoit.
+            if (sliceActive && phase >= sliceDuration)
+            {
+                previous = current;
+                previous.gain = 1.0f;
+                current.active = false;
+                sliceActive = false;
+                thruTarget = thruAfter;
+                viewActive.store (false, std::memory_order_relaxed);
+            }
+
             // 3. Ce qui part vers le pitch : la slice, ou l'entrée entre deux slices ; une voix remplacée s'efface en 1,5 ms.
             for (int ch = 0; ch < numCh; ++ch)
             {
@@ -507,7 +532,7 @@ private:
             thru = thruTarget > thru ? std::min (thruTarget, thru + thruStep) : std::max (thruTarget, thru - thruStep);
 
             const float envelopeTarget = sliceActive
-                ? (float) envelopeAt (phase, envAttack, envDecay, envSustain, envRelease, minimumRelease) * (1.0f - thru)
+                ? (float) envelopeAt (phase / sliceDuration, envAttack, envDecay, envSustain, envRelease, minimumRelease / sliceDuration) * (1.0f - thru)
                 : 0.0f;
 
             envelopeNow = envelopeTarget > envelopeNow ? std::min (envelopeTarget, envelopeNow + envelopeSlew)
@@ -585,6 +610,8 @@ private:
     double spanLow = 64.0, spanHigh = 4096.0;
 
     double envAttack = 0.0, envDecay = 0.3, envSustain = 1.0, envRelease = 0.1;
+    double duration = 1.0, sliceDuration = 1.0;
+    float thruAfter = 1.0f;
     int thruMode = thruInput;
 
     Voice current, previous;

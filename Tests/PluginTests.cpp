@@ -134,17 +134,18 @@ static void testParameters()
             ids.add (withId->paramID);
 
     check (ids.size() == params.size(), "un parametre sans identifiant");
-    check (ids.size() == 96, "nombre de parametres : " + juce::String (ids.size()));
+    check (ids.size() == 28, "nombre de parametres : " + juce::String (ids.size()));
 
     juce::StringArray unique (ids);
     unique.removeDuplicates (false);
     check (unique.size() == ids.size(), "identifiants en double");
 
-    for (int step = 0; step < Ids::numSteps; ++step)
-    {
-        check (ids.contains (Ids::chanceId (step)), "manque " + Ids::chanceId (step));
-        check (ids.contains (Ids::gateStepId (step)), "manque " + Ids::gateStepId (step));
-    }
+    for (const char* id : { Ids::chanceId, Ids::durationId, Ids::attackId, Ids::releaseId, Ids::pitchId })
+        check (ids.contains (id), juce::String ("manque ") + id);
+
+    auto* pitch = dynamic_cast<juce::RangedAudioParameter*> (phractal (*p).apvts.getParameter (Ids::pitchId));
+    check (pitch != nullptr && juce::approximatelyEqual (pitch->convertFrom0to1 (0.0f), -48.0f) && juce::approximatelyEqual (pitch->convertFrom0to1 (1.0f), 48.0f),
+           "plage du pitch : -48 a +48");
 
     // Longueurs en SYNC : 37 valeurs, de 1/1 à 1/4096, de la plus longue à la plus courte.
     const auto& names = Ids::getDivisionNames();
@@ -164,12 +165,9 @@ static void testParameters()
     check (std::abs (Ids::getDivisionInBeats (13) - 0.1875) < 1.0e-12, "1/32D : mauvaise longueur");
 
     int indices[64];
-    check (Ids::collectDivisions (12, 18, true, true, true, indices) == 7, "1/16 a 1/64, tout : 7 valeurs");
-    check (Ids::collectDivisions (12, 18, true, false, false, indices) == 3, "1/16 a 1/64, droites seules : 3 valeurs");
-    check (Ids::collectDivisions (18, 12, true, false, false, indices) == 3, "bornes inversees");
-    check (Ids::collectDivisions (14, 17, true, false, false, indices) == 3 && indices[0] == 14 && indices[2] == 17,
-           "les bornes restent dans le tirage meme si leur variante est exclue");
-    check (Ids::collectDivisions (12, 18, false, true, true, indices) == 1 && indices[0] == 12, "sans tirage : MAX seul");
+    check (Ids::collectDivisions (12, 18, indices) == 7 && indices[0] == 12 && indices[6] == 18, "1/16 a 1/64 : 7 valeurs");
+    check (Ids::collectDivisions (18, 12, indices) == 7, "bornes inversees");
+    check (Ids::collectDivisions (12, 12, indices) == 1 && indices[0] == 12, "LONG = SHORT : une seule valeur");
 
     // Textes
     check (Ids::pitchToText (7.0f) == "+7 st" && Ids::pitchToText (-12.0f) == "-12 st" && Ids::pitchToText (3.25f) == "+3.25 st", "texte du pitch");
@@ -217,16 +215,13 @@ static void testSlicesOnTheGrid()
     p->setPlayHead (&head);
 
     setParam (*p, Ids::sliceId, 1.0f);
-    setParam (*p, Ids::stepsId, 4.0f);   // un pas par noire
-    setParam (*p, Ids::thruId, 0.0f);    // silence entre les slices
-
-    for (int step = 0; step < Ids::numSteps; ++step)
-        setParam (*p, Ids::chanceId (step), step == 1 ? 100.0f : 0.0f);   // seul le 2e temps
-
-    setParam (*p, Ids::randomId, 0.0f);
-    setParam (*p, Ids::maxDivisionId, 12.0f);   // 1/16 = 6000 échantillons
+    setParam (*p, Ids::stepsId, 4.0f);       // un pas par noire
+    setParam (*p, Ids::chanceId, 100.0f);    // chaque pas devient une slice
+    setParam (*p, Ids::durationId, 50.0f);   // pendant la moitié du pas
+    setParam (*p, Ids::thruId, 0.0f);        // puis silence
+    setParam (*p, Ids::maxDivisionId, 12.0f);   // LONG = SHORT = 1/16 = 6000 échantillons
+    setParam (*p, Ids::minDivisionId, 12.0f);
     setParam (*p, Ids::attackId, 0.0f);
-    setParam (*p, Ids::sustainId, 100.0f);
     setParam (*p, Ids::releaseId, 0.0f);
 
     const auto in = makeNoise (2, 24000 * 8, 3);
@@ -240,23 +235,28 @@ static void testSlicesOnTheGrid()
         head.barStart = 4.0 * std::floor (beats / 4.0);
     });
 
-    // Temps 1 : silence. Temps 2 : la slice (premier passage = l'entrée, puis répétitions de 6000 échantillons).
-    check (out.getMagnitude (0, 200, 23700) <= 0.0f, "temps 1 : du son alors que la chance est nulle");
+    // À chaque temps : premier passage (l'entrée), une répétition, puis silence jusqu'au temps suivant.
+    for (const int beat : { 1, 2, 5 })
+    {
+        const int start = beat * 24000;
+        int mismatches = 0;
 
-    int mismatches = 0;
+        for (int i = start + 200; i < start + 5900; ++i)
+            mismatches += std::abs (out.getSample (0, i) - in.getSample (0, i)) > 1.0e-6f;
 
-    for (int i = 24000 + 200; i < 24000 + 5900; ++i)
-        mismatches += std::abs (out.getSample (0, i) - in.getSample (0, i)) > 1.0e-6f;
+        for (int i = start + 6000 + 200; i < start + 6000 + 5800; ++i)
+            mismatches += std::abs (out.getSample (0, i) - in.getSample (0, i - 6000)) > 1.0e-6f;
 
-    for (int i = 24000 + 6000 + 200; i < 24000 + 6000 + 5900; ++i)
-        mismatches += std::abs (out.getSample (0, i) - in.getSample (0, i - 6000)) > 1.0e-6f;
+        check (mismatches == 0, "temps " + juce::String (beat + 1) + " : la slice ne rejoue pas son premier passage (" + juce::String (mismatches) + ")");
+        check (out.getMagnitude (0, start + 12000 + 100, 11700) <= 0.0f, "temps " + juce::String (beat + 1) + " : du son apres DURATION");
+    }
 
-    check (mismatches == 0, "temps 2 : la slice ne rejoue pas son premier passage (" + juce::String (mismatches) + ")");
-    check (out.getMagnitude (0, 48000 + 200, 47700) <= 0.0f, "temps 3 et 4 : du son");
-    check (out.getMagnitude (0, 96000 + 24000 + 200, 4800) > 0.1f, "mesure 2 : pas de slice au 2e temps");
+    check ((phractal (*p).getEngine().getSlicedMask() & 1u) != 0, "le pas 0 n'est pas marque comme slice");
 
-    // La vue de l'interface : le pas 1 est marqué comme slice.
-    check ((phractal (*p).getEngine().getSlicedMask() & 2u) != 0, "le pas 1 n'est pas marque comme slice");
+    // Chance nulle, THRU OFF : silence.
+    setParam (*p, Ids::chanceId, 0.0f);
+    process (*p, in, out, 480, [&head, sr] (int sample) { head.beats = 32.0 + sample / sr * 2.0; head.barStart = 4.0 * std::floor (head.beats.orFallback (0.0) / 4.0); });
+    check (out.getMagnitude (0, 1000, 24000 * 8 - 1000) <= 0.0f, "chance 0 % : du son");
 }
 
 static void testGateAndOutput()
@@ -269,10 +269,9 @@ static void testGateAndOutput()
     head.bpm = 120.0;
     p->setPlayHead (&head);
 
-    // Gate sur 1/16 (6000 échantillons), motif x.xx, ouvert 50 % du pas, sans lissage.
+    // Gate sur 1/16 (6000 échantillons) : chaque pas ouvert la moitié du temps, sans lissage.
     setParam (*p, Ids::gateId, 1.0f);
     setParam (*p, Ids::gateDivisionId, 4.0f);
-    setParam (*p, Ids::gateStepsId, 4.0f);
     setParam (*p, Ids::gateLengthId, 50.0f);
     setParam (*p, Ids::gateSmoothId, 0.0f);
 
@@ -286,7 +285,8 @@ static void testGateAndOutput()
 
     check (std::abs (out.getSample (0, 1500) - 0.5f) < 1.0e-5f, "gate : pas 0 ouvert");
     check (std::abs (out.getSample (0, 4500)) < 1.0e-5f, "gate : fin du pas 0 fermee (longueur 50 %)");
-    check (std::abs (out.getSample (0, 7500)) < 1.0e-5f, "gate : pas 1 ferme (motif x.xx)");
+    check (std::abs (out.getSample (0, 7500) - 0.5f) < 1.0e-5f, "gate : pas 1 ouvert");
+    check (std::abs (out.getSample (0, 10500)) < 1.0e-5f, "gate : fin du pas 1 fermee");
     check (std::abs (out.getSample (0, 13500) - 0.5f) < 1.0e-5f, "gate : pas 2 ouvert");
 
     // Mix à 0 % : l'entrée, quel que soit le gate.
@@ -319,11 +319,9 @@ static void testPitchAndMicroLoops()
     setParam (*p, Ids::stepsId, 1.0f);
     setParam (*p, Ids::thruId, 0.0f);
 
-    for (int step = 0; step < Ids::numSteps; ++step)
-        setParam (*p, Ids::chanceId (step), 100.0f);
-
-    setParam (*p, Ids::randomId, 0.0f);
+    setParam (*p, Ids::chanceId, 100.0f);
     setParam (*p, Ids::maxDivisionId, 27.0f);   // 1/512 à 190 BPM : 2,47 ms, environ 405 Hz
+    setParam (*p, Ids::minDivisionId, 27.0f);
     setParam (*p, Ids::releaseId, 0.0f);
 
     const auto in = makeNoise (1, 48000, 4);
@@ -383,8 +381,8 @@ static void testStateAndBypass()
 
     auto p = makePlugin (48000.0, 512);
     setParam (*p, Ids::sliceId, 1.0f);
-    setParam (*p, Ids::chanceId (7), 13.0f);
-    setParam (*p, Ids::gateStepId (31), 0.0f);
+    setParam (*p, Ids::chanceId, 13.0f);
+    setParam (*p, Ids::durationId, 37.0f);
     setParam (*p, Ids::maxDivisionId, 30.0f);
     setParam (*p, Ids::pitchId, -7.25f);
     setParam (*p, Ids::levelId, -3.5f);
@@ -396,8 +394,8 @@ static void testStateAndBypass()
     auto q = makePlugin (44100.0, 256);
     q->setStateInformation (state.getData(), (int) state.getSize());
 
-    check (juce::approximatelyEqual (getParam (*q, Ids::chanceId (7)), 13.0f), "chance du pas 8 non restauree");
-    check (getParam (*q, Ids::gateStepId (31)) < 0.5f, "pas 32 du gate non restaure");
+    check (juce::approximatelyEqual (getParam (*q, Ids::chanceId), 13.0f), "chance non restauree");
+    check (juce::approximatelyEqual (getParam (*q, Ids::durationId), 37.0f), "duree non restauree");
     check (juce::roundToInt (getParam (*q, Ids::maxDivisionId)) == 30, "MAX non restaure");
     check (std::abs (getParam (*q, Ids::pitchId) + 7.25f) < 0.001f, "pitch non restaure");
     check (std::abs (getParam (*q, Ids::levelId) + 3.5f) < 0.001f, "niveau non restaure");
@@ -407,7 +405,7 @@ static void testStateAndBypass()
     const char junk[] = "pas un etat";
     q->setStateInformation (junk, (int) sizeof (junk));
     q->setStateInformation (state.getData(), 10);
-    check (juce::approximatelyEqual (getParam (*q, Ids::chanceId (7)), 13.0f), "un etat abime a efface les reglages");
+    check (juce::approximatelyEqual (getParam (*q, Ids::chanceId), 13.0f), "un etat abime a efface les reglages");
 
     // Bypass : l'entrée passe, puis on repart proprement.
     const auto in = makeNoise (2, 4800, 5);
@@ -483,62 +481,20 @@ static void testEditor (const juce::File& outputDir)
                 check (false, a->getComponentID() + " chevauche " + b->getComponentID());
     }
 
-    // Un clic sur la rangée CHANCE règle le pas visé ; un clic sur le gate inverse un pas.
-    auto* lane = dynamic_cast<StepLane*> (find ("chances"));
-    auto* gateLane = dynamic_cast<StepLane*> (find ("gatePattern"));
-    check (lane != nullptr && gateLane != nullptr, "rangees de pas introuvables");
-
-    if (lane != nullptr && gateLane != nullptr)
-    {
-        check (lane->getNumShownSteps() == 16, "16 pas affiches par defaut");
-
-        // Pas 3 (sur 16), tout en haut : 100 %.
-        const auto area = lane->getLocalBounds().toFloat().reduced (6.0f, 5.0f);
-        const juce::Point<float> top { area.getX() + area.getWidth() * (2.5f / 16.0f), area.getY() + 1.0f };
-        const auto down = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), top, juce::ModifierKeys::leftButtonModifier,
-                                            1.0f, 0.0f, 0.0f, 0.0f, 0.0f, lane, lane, juce::Time::getCurrentTime(), top, juce::Time::getCurrentTime(), 1, false);
-        lane->mouseDown (down);
-        lane->mouseUp (down);
-        check (juce::approximatelyEqual (getParam (*p, Ids::chanceId (2)), 100.0f), "clic sur le pas 3 : " + juce::String (getParam (*p, Ids::chanceId (2))));
-
-        // Glisser vers le bas du pas 1 au pas 6 : tous à 0 % (aucun trou).
-        const juce::Point<float> from { area.getX() + area.getWidth() * (0.5f / 16.0f), area.getBottom() - 0.5f };
-        const juce::Point<float> to { area.getX() + area.getWidth() * (5.5f / 16.0f), area.getBottom() - 0.5f };
-        const auto press = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), from, juce::ModifierKeys::leftButtonModifier,
-                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f, lane, lane, juce::Time::getCurrentTime(), from, juce::Time::getCurrentTime(), 1, false);
-        const auto drag = press.withNewPosition (to);
-        lane->mouseDown (press);
-        lane->mouseDrag (drag);
-        lane->mouseUp (drag);
-
-        bool allZero = true;
-
-        for (int step = 0; step < 6; ++step)
-            allZero = allZero && getParam (*p, Ids::chanceId (step)) < 0.5f;
-
-        check (allZero, "glisser du pas 1 au pas 6 : il reste des pas non nuls");
-        check (getParam (*p, Ids::chanceId (6)) > 49.0f, "le pas 7 a ete touche");
-
-        const auto gateArea = gateLane->getLocalBounds().toFloat().reduced (6.0f, 5.0f);
-        const juce::Point<float> second { gateArea.getX() + gateArea.getWidth() * (1.5f / 16.0f), gateArea.getCentreY() };
-        const auto click = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), second, juce::ModifierKeys::leftButtonModifier,
-                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f, gateLane, gateLane, juce::Time::getCurrentTime(), second, juce::Time::getCurrentTime(), 1, false);
-        gateLane->mouseDown (click);
-        gateLane->mouseUp (click);
-        check (getParam (*p, Ids::gateStepId (1)) > 0.5f, "clic sur le pas 2 du gate : il ne s'allume pas");
-
-        // Le nombre de pas suit le potard STEPS.
-        setParam (*p, Ids::stepsId, 7.0f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
-        check (lane->getNumShownSteps() == 7, "STEPS = 7 : " + juce::String (lane->getNumShownSteps()) + " pas affiches");
-    }
-
     // Afficheurs de valeur
+    auto* chanceReadout = dynamic_cast<juce::Label*> (find ("value/0"));
+    check (chanceReadout != nullptr && chanceReadout->getText() == "50 %", "afficheur CHANCE : " + (chanceReadout != nullptr ? chanceReadout->getText() : juce::String()));
+
+    auto* pitchReadout = dynamic_cast<juce::Label*> (find ("value/2"));
+    setParam (*p, Ids::pitchId, 36.0f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+    check (pitchReadout != nullptr && pitchReadout->getText() == "+36 st", "afficheur PITCH : " + (pitchReadout != nullptr ? pitchReadout->getText() : juce::String()));
+
     auto* readout = dynamic_cast<juce::Label*> (find ("value/1"));
-    check (readout != nullptr && readout->getText() == "1/16", "afficheur MAX : " + (readout != nullptr ? readout->getText() : juce::String()));
+    check (readout != nullptr && readout->getText() == "1/16", "afficheur LONG : " + (readout != nullptr ? readout->getText() : juce::String()));
     setParam (*p, Ids::lengthModeId, 0.0f);
     juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
-    check (readout != nullptr && readout->getText() == "100 ms", "afficheur MAX en FREE : " + (readout != nullptr ? readout->getText() : juce::String()));
+    check (readout != nullptr && readout->getText() == "100 ms", "afficheur LONG en FREE : " + (readout != nullptr ? readout->getText() : juce::String()));
     setParam (*p, Ids::lengthModeId, 1.0f);
 
     auto* rateReadout = dynamic_cast<juce::Label*> (find ("value/3"));
@@ -569,11 +525,8 @@ static void testEditor (const juce::File& outputDir)
     editor->setSize (PhractalFacade::width, PhractalFacade::height);
     snapshot ("phractal-defaut");
 
-    setParam (*p, Ids::stepsId, 16.0f);
-    juce::Random rng (12);
-
-    for (int step = 0; step < Ids::numSteps; ++step)
-        setParam (*p, Ids::chanceId (step), (float) rng.nextInt (101));
+    setParam (*p, Ids::chanceId, 65.0f);
+    setParam (*p, Ids::durationId, 70.0f);
 
     for (const char* id : { Ids::sliceId, Ids::pitchOnId, Ids::gateId, Ids::filterId })
         setParam (*p, id, 1.0f);
@@ -584,7 +537,6 @@ static void testEditor (const juce::File& outputDir)
     setParam (*p, Ids::minDivisionId, 30.0f);
     setParam (*p, Ids::attackId, 10.0f);
     setParam (*p, Ids::releaseId, 35.0f);
-    setParam (*p, Ids::sustainId, 60.0f);
     setParam (*p, Ids::gateSmoothId, 40.0f);
     setParam (*p, Ids::pitchId, 7.0f);
 

@@ -24,9 +24,11 @@
 
     La durée du son est conservée et aucune latence n'est déclarée : le son
     transposé sort avec un léger retard variable (quelques ms pour un petit
-    écart, 10 à 20 ms en moyenne à l'octave, une soixantaine de ms dans le pire
-    cas : son très grave transposé d'une octave vers le haut). À 0 demi-ton, le
-    signal passe tel quel, à l'échantillon près.
+    écart, 10 à 20 ms en moyenne à l'octave). Au-delà d'une octave vers l'aigu
+    (jusqu'à +48 demi-tons), les grains raccourcissent (jusqu'à 4 ms) pour que
+    ce retard reste sous 60 ms environ : le son devient plus granuleux, ce qui
+    est voulu à ces extrêmes. À 0 demi-ton, le signal passe tel quel, à
+    l'échantillon près.
 
     Limite de la méthode : un raccord ne peut être en phase que pour des sons
     de même période. Sur plusieurs sons sans rapport harmonique joués ensemble,
@@ -35,14 +37,17 @@
 class PitchShifter
 {
 public:
-    static constexpr double maxSemitones = 24.0;
+    static constexpr double maxSemitones = 48.0;
 
     void prepare (double sampleRate, int numChannels)
     {
         const double sr = sampleRate > 0.0 ? sampleRate : 44100.0;
 
-        hop = std::max (16, (int) std::lround (0.015 * sr));      // grains de 30 ms, un départ toutes les 15 ms
-        grain = 2 * hop;
+        maxGrain = 2 * std::max (16, (int) std::lround (0.015 * sr));   // grains de 30 ms, un départ toutes les 15 ms
+        minGrain = 2 * std::max (4, (int) std::lround (0.002 * sr));    // 4 ms au plus court
+        lagBudget = 0.06 * sr;                                          // retard maximal visé vers l'aigu : 60 ms
+        grain = maxGrain;
+        hop = grain / 2;
         span = std::max (8, (int) std::lround (0.030 * sr));      // recherche du raccord : 30 ms (une période à 33 Hz)
         match = std::max (8, (int) std::lround (0.010 * sr));     // longueur comparée : 10 ms
         neighbourReach = 0.008 * sr;
@@ -52,7 +57,7 @@ public:
         const double maxRatio = std::pow (2.0, maxSemitones / 12.0) * headroom;
         // Le plus loin qu'on relit : le recul d'un grain à la vitesse maximale, la zone de recherche (deux fois :
         // pour les candidats, puis pour comparer le son à lui-même), un grain de retard et la longueur comparée.
-        const int needed = (int) std::ceil ((maxRatio - 1.0) * (double) grain) + 2 * span + grain + match + 4 * decimation + 64;
+        const int needed = (int) std::ceil ((maxRatio - 1.0) * (double) maxGrain) + 2 * span + maxGrain + match + 4 * decimation + 64;
 
         size = 256;
 
@@ -60,11 +65,6 @@ public:
             size *= 2;
 
         mask = (std::int64_t) size - 1;
-
-        window.resize ((size_t) grain);
-
-        for (int i = 0; i < grain; ++i)
-            window[(size_t) i] = (float) (0.5 - 0.5 * std::cos (2.0 * 3.14159265358979323846 * ((double) i + 0.5) / (double) grain));
 
         const auto channels = (size_t) std::max (1, numChannels);
         rings.assign (channels, std::vector<float> ((size_t) size, 0.0f));
@@ -155,7 +155,7 @@ public:
                 const double whole = std::floor (g.position);
                 const auto index = (std::int64_t) whole;
                 const float fraction = (float) (g.position - whole);
-                const float gain = window[(size_t) std::min (g.age, grain - 1)];
+                const float gain = windowAt (g.age, g.length);
 
                 for (int ch = 0; ch < numCh; ++ch)
                     frame[(size_t) ch] += gain * interpolate (rings[(size_t) ch].data(), index, fraction);
@@ -168,7 +168,7 @@ public:
             // amplitude : sans correction, le niveau se creuserait à chaque raccord.
             if (coherence < 1.0)
             {
-                const double w = (double) window[(size_t) std::min (grains[0].age - 1, grain - 1)];
+                const double w = (double) windowAt (grains[0].age - 1, grains[0].length);
                 const auto makeUp = (float) (1.0 / std::sqrt (1.0 - 2.0 * w * (1.0 - w) * (1.0 - coherence)));
 
                 for (int ch = 0; ch < numCh; ++ch)
@@ -177,6 +177,9 @@ public:
 
             if (--untilNext <= 0)
             {
+                // Vers l'aigu, les grains raccourcissent : la tête n'a jamais à reculer de plus de 60 ms.
+                grain = grainFor (std::max (ratio, targetRatio));
+                hop = grain / 2;
                 startGrain (nextSlot, targetRatio);
                 nextSlot = 1 - nextSlot;
                 untilNext = hop;
@@ -200,7 +203,26 @@ private:
     {
         double position;   // position de lecture dans la mémoire, en échantillons depuis le début
         int age;           // échantillons joués depuis le départ du grain
+        int length;        // durée du grain, en échantillons
     };
+
+    /** Fenêtre de Hann d'un grain de "length" échantillons, à l'échantillon "age". */
+    static float windowAt (int age, int length) noexcept
+    {
+        const int a = std::max (0, std::min (age, length - 1));
+        return (float) (0.5 - 0.5 * std::cos (2.0 * 3.14159265358979323846 * ((double) a + 0.5) / (double) length));
+    }
+
+    /** Durée de grain pour une vitesse de lecture : 30 ms, plus court au-delà d'une octave vers l'aigu. */
+    int grainFor (double readRatio) const noexcept
+    {
+        if (readRatio <= 1.0 + 1.0e-6)
+            return maxGrain;
+
+        const double wanted = lagBudget / (readRatio * headroom - 1.0);
+        const int length = (int) std::lround (std::max ((double) minGrain, std::min ((double) maxGrain, wanted)));
+        return std::max (minGrain, length & ~1);
+    }
 
     /** Interpolation cubique (Catmull-Rom) entre les échantillons index et index + 1. */
     float interpolate (const float* ring, std::int64_t index, float fraction) const noexcept
@@ -230,9 +252,11 @@ private:
         ratio = targetRatio;
 
         // Deux grains d'emblée, au même endroit, l'un à mi-course : la somme des fenêtres vaut 1 dès le premier échantillon.
+        grain = grainFor (targetRatio);
+        hop = grain / 2;
         const auto start = (double) latestStart (targetRatio, grain);
-        grains[0] = { start, hop };
-        grains[1] = { start, 0 };
+        grains[0] = { start, hop, grain };
+        grains[1] = { start, 0, grain };
         coherence = 1.0;
 
         nextSlot = 0;
@@ -246,7 +270,7 @@ private:
         const double other = std::min (grains[1 - slot].position, (double) (written - 1));
         const auto start = chooseStart (other, latestStart (targetRatio, grain), std::max (ratio, targetRatio) < 1.0);
 
-        grains[slot] = { start.position, 0 };
+        grains[slot] = { start.position, 0, grain };
         coherence = start.coherence;
     }
 
@@ -425,11 +449,12 @@ private:
 
     std::vector<std::vector<float>> rings;      // [canal][size] : l'entrée, en continu
     std::vector<float> mono;                    // somme des canaux, pour la recherche du raccord
-    std::vector<float> window, frame;
-    int size = 0, grain = 2, hop = 1, span = 1, match = 1, decimation = 1;
+    std::vector<float> frame;
+    int size = 0, grain = 2, hop = 1, span = 1, match = 1, decimation = 1, maxGrain = 2, minGrain = 2;
+    double lagBudget = 1.0;
     std::int64_t mask = 0, written = 0;
 
-    Grain grains[2] = { { 0.0, 0 }, { 0.0, 0 } };
+    Grain grains[2] = { { 0.0, 0, 2 }, { 0.0, 0, 2 } };
     int nextSlot = 0, untilNext = 0;
     bool engaged = false;
 

@@ -74,64 +74,15 @@ private:
 
 //==============================================================================
 /**
-    Une rangée de 32 pas : les chances des slices (barres qu'on dessine à la
-    souris) ou le motif du gate (cases qu'on allume ou éteint). Seuls les pas
-    en service sont montrés, sur toute la largeur. Le pas en cours s'allume.
-*/
-class StepLane final : public juce::Component,
-                       private juce::Timer
-{
-public:
-    enum Kind { chances, gate };
-
-    StepLane (PhractalAudioProcessor&, Kind);
-    ~StepLane() override;
-
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
-
-    int getNumShownSteps() const noexcept               { return numShown; }
-
-    /** Relit l'état du moteur tout de suite (les tests s'en servent ; sinon le minuteur s'en charge). */
-    void refresh();
-
-private:
-    void timerCallback() override                       { refresh(); }
-    juce::Rectangle<float> cellArea (int step) const;
-    int stepAt (float x) const;
-    void edit (const juce::MouseEvent&, bool first);
-    void finishGestures();
-
-    PhractalAudioProcessor& audioProcessor;
-    const Kind kind;
-
-    std::unique_ptr<juce::ParameterAttachment> attachments[PhractalAudioProcessor::numSteps];
-    std::unique_ptr<juce::ParameterAttachment> countAttachment, extraAttachment, powerAttachment;
-    float values[PhractalAudioProcessor::numSteps] = {};
-    bool touched[PhractalAudioProcessor::numSteps] = {};
-    int numShown = 16, lastStep = -2, editingStep = -1;
-    std::uint32_t lastMask = 0;
-    float gateLength = 0.75f, paintValue = 1.0f;
-    bool powered = false;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepLane)
-};
-
-//==============================================================================
-/**
     La façade à taille fixe : cinq modules (SLICE, LOOP, PITCH, GATE, FILTER)
     côte à côte, chacun avec son grand potard, son afficheur, ses interrupteurs,
-    son grand bouton et un panneau de réglages ; en dessous, la séquence
-    (chances des slices et motif du gate). L'éditeur la met à l'échelle.
+    son grand bouton et un panneau de réglages. L'éditeur la met à l'échelle.
 */
 class PhractalFacade final : public juce::Component,
                              private juce::Timer
 {
 public:
-    static constexpr int width = 1218, height = 796;
+    static constexpr int width = 1218, height = 642;
 
     explicit PhractalFacade (PhractalAudioProcessor&);
     ~PhractalFacade() override;
@@ -177,20 +128,19 @@ private:
     juce::Image background;
     float backgroundScale = 0.0f;
 
-    bool sliceOn = false, randomOn = true, pitchOn = false, gateOn = false, filterOn = false;
-    bool tripletsAllowed = true, dottedAllowed = true, pitchInSemitones = true, steepFilter = true;
-    int lengthMode = 1, filterType = 0, gateFeel = 0;
+    bool sliceOn = false, syncOn = true, pitchOn = false, gateOn = false, filterOn = false;
+    bool pitchInSemitones = true, steepFilter = true;
+    int filterType = 0, gateFeel = 0, thruMode = 1;
     double shownLength = -1.0, shownBpm = -1.0;
     float inputLevel = 0.0f, outputLevel = 0.0f;   // affichés, en dB au-dessus de -60
 
-    juce::Slider stepsKnob, maxDivisionKnob, maxTimeKnob, pitchKnob, gateRateKnob, cutoffKnob;
-    juce::Slider attackKnob, decayKnob, sustainKnob, releaseKnob, minDivisionKnob, minTimeKnob;
-    juce::Slider mixKnob, levelKnob, gateStepsKnob, gateLengthKnob, gateSmoothKnob, resonanceKnob;
+    juce::Slider chanceKnob, maxDivisionKnob, maxTimeKnob, pitchKnob, gateRateKnob, cutoffKnob;
+    juce::Slider stepsKnob, durationKnob, attackKnob, releaseKnob, minDivisionKnob, minTimeKnob;
+    juce::Slider mixKnob, levelKnob, gateLengthKnob, gateSmoothKnob, resonanceKnob;
     juce::Label valueLabels[5];
-    juce::TextButton sliceButton { "SLICE" }, randomButton { "RANDOM" }, pitchButton { "PITCH" }, gateButton { "GATE" }, filterButton { "FILTER" };
-    juce::TextButton tripletButton { "TRIPLET" }, dottedButton { "DOTTED" }, limiterButton { "LIMITER" };
-    ChoiceSwitch thruSwitch, lengthModeSwitch, pitchModeSwitch, gateFeelSwitch, filterTypeSwitch, filterSlopeSwitch;
-    StepLane chanceLane, gateLane;
+    juce::TextButton sliceButton { "SLICE" }, syncButton { "SYNC" }, pitchButton { "PITCH" }, gateButton { "GATE" }, filterButton { "FILTER" };
+    juce::TextButton limiterButton { "LIMITER" };
+    ChoiceSwitch thruSwitch, pitchModeSwitch, gateFeelSwitch, filterTypeSwitch, filterSlopeSwitch;
 
     // Déclarés après les contrôles : détruits avant eux.
     std::vector<std::unique_ptr<APVTS::SliderAttachment>> sliderAttachments;

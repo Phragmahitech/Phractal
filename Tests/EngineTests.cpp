@@ -300,7 +300,7 @@ static void testPitch()
 
     const double sr = 48000.0;
 
-    for (double semitones : { 12.0, 7.0, -12.0, 3.5 })
+    for (double semitones : { 12.0, 7.0, -12.0, 3.5, 24.0, 36.0, 48.0, -24.0, -48.0 })
     {
         SliceEngine e;
         e.prepare (sr, 1);
@@ -316,7 +316,9 @@ static void testPitch()
         const double expected = 220.0 * std::exp2 (semitones / 12.0);
         const double measured = zeroCrossingFrequency (out[0], (int) (0.3 * sr), (int) (1.2 * sr), sr);
 
-        check (std::abs (measured / expected - 1.0) < 0.004, num (semitones) + " st : " + num (measured) + " Hz au lieu de " + num (expected));
+        // À -48, il n'y a qu'une douzaine de périodes à mesurer dans la fenêtre : la mesure elle-même est moins précise.
+        const double tolerance = std::abs (semitones) > 36.0 ? 0.015 : 0.004;
+        check (std::abs (measured / expected - 1.0) < tolerance, num (semitones) + " st : " + num (measured) + " Hz au lieu de " + num (expected));
     }
 
     // Le pitch ne touche pas l'entrée qui passe en THRU.
@@ -420,6 +422,56 @@ static void testThru()
     }
 
     check (muted > 15 && open > 15, "THRU hasard : " + num (muted) + " pas muets, " + num (open) + " ouverts");
+}
+
+static void testDuration()
+{
+    std::cout << "- duree des slices" << std::endl;
+
+    const double sr = 48000.0;
+    Signal dc (1, std::vector<float> (48000, 0.5f));
+
+    // Un pas d'une seconde, slice sur 25 % du pas, puis silence (THRU OFF).
+    SliceEngine e;
+    e.prepare (sr, 1);
+    baseSettings (e, 1, 48000.0);
+    e.setChance (0, 1.0f);
+    const double choices[] = { 3000.0 };
+    e.setLengthChoices (choices, 1);
+    e.setDuration (0.25);
+    e.setSlicing (true);
+
+    const auto out = run (e, dc, 512);
+    check (std::abs (out[0][6000] - 0.5f) < 1.0e-3f, "duree 25 % : du son au debut du pas");
+    check (std::abs (out[0][11000] - 0.5f) < 0.02f, "duree 25 % : la slice se tait trop tot");
+    check (std::abs (out[0][12500]) < 1.0e-6f, "duree 25 % : du son apres la slice (THRU OFF)");
+    check (std::abs (out[0][40000]) < 1.0e-6f, "duree 25 % : du son a la fin du pas");
+
+    // Même chose avec THRU ON : après la slice, l'entrée telle quelle.
+    SliceEngine t;
+    t.prepare (sr, 1);
+    baseSettings (t, 1, 48000.0);
+    t.setChance (0, 1.0f);
+    t.setLengthChoices (choices, 1);
+    t.setDuration (0.25);
+    t.setThru (SliceEngine::thruInput);
+    t.setSlicing (true);
+
+    const auto noise = makeNoise (1, 48000, 21);
+    const auto thru = run (t, noise, 512);
+    int mismatches = 0;
+
+    for (int i = 12200; i < 48000; ++i)
+        mismatches += thru[0][(size_t) i] != noise[0][(size_t) i];
+
+    check (mismatches == 0, "duree 25 %, THRU ON : l'entree n'est pas intacte apres la slice (" + num (mismatches) + ")");
+
+    float jump = 0.0f;
+
+    for (size_t i = 1; i < thru[0].size(); ++i)
+        jump = std::max (jump, std::abs (thru[0][i] - thru[0][i - 1]));
+
+    check (jump < 1.01f, "duree : saut aberrant");
 }
 
 static void testGridSync()
@@ -616,7 +668,8 @@ static void testFuzz()
 
                 e.setEnvelope (u (gen), u (gen), u (gen), u (gen));
                 e.setThru ((int) (u (gen) * 3));
-                e.setPitch (u (gen) < 0.3 ? 0.0 : (u (gen) * 48.0 - 24.0));
+                e.setDuration (u (gen));
+                e.setPitch (u (gen) < 0.3 ? 0.0 : (u (gen) * 96.0 - 48.0));
                 e.setGateActive (u (gen) < 0.5);
                 e.setGate (2 + (int) (u (gen) * 31), sr * (0.005 + u (gen) * 0.3), (std::uint32_t) gen(), u (gen), u (gen));
                 e.setSlicing (u (gen) < 0.85);
@@ -636,6 +689,7 @@ int main()
     testPitch();
     testEnvelope();
     testThru();
+    testDuration();
     testGridSync();
     testGate();
     testLengthsAndStop();

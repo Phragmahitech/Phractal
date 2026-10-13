@@ -199,29 +199,14 @@ juce::String PhractalAudioProcessor::pitchToText (float semitones)
     return ((whole ? rounded : semitones) > 0.0f ? "+" : "") + number + " st";
 }
 
-int PhractalAudioProcessor::collectDivisions (int longest, int shortest, bool random, bool allowTriplets, bool allowDotted, int* indices)
+int PhractalAudioProcessor::collectDivisions (int from, int to, int* indices)
 {
     const int last = getNumDivisions() - 1;
-    longest = juce::jlimit (0, last, longest);
-    shortest = juce::jlimit (0, last, shortest);
-
-    if (! random)
-    {
-        indices[0] = longest;
-        return 1;
-    }
-
-    const int from = juce::jmin (longest, shortest), to = juce::jmax (longest, shortest);
+    const int a = juce::jlimit (0, last, juce::jmin (from, to)), b = juce::jlimit (0, last, juce::jmax (from, to));
     int count = 0;
 
-    for (int i = from; i <= to; ++i)
-    {
-        const int feel = getDivisionFeel (i);
-
-        // Les deux bornes sont toujours dans le tirage : c'est un choix explicite.
-        if (i == from || i == to || feel == straight || (feel == triplet && allowTriplets) || (feel == dotted && allowDotted))
-            indices[count++] = i;
-    }
+    for (int i = a; i <= b; ++i)
+        indices[count++] = i;
 
     return count;
 }
@@ -230,29 +215,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhractalAudioProcessor::crea
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // --- Grille des slices ---
+    // --- Slices ---
     layout.add (makeSwitch (sliceId, "Slice", false));
-    layout.add (makeCount (stepsId, "Steps", 1, numSteps, 16));
+    layout.add (makeCount (stepsId, "Grid", 1, numSteps, 16));
+    layout.add (makePercentParameter (chanceId, "Chance", 50.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { durationId, 1 }, "Duration",
+                                                             juce::NormalisableRange<float> (5.0f, 100.0f, 1.0f), 100.0f,
+                                                             juce::AudioParameterFloatAttributes()
+                                                                 .withStringFromValueFunction ([] (float value, int) { return juce::String (juce::roundToInt (value)) + " %"; })
+                                                                 .withValueFromStringFunction (textToNumber)));
     layout.add (makeChoice (thruId, "Thru", { "Off", "Input", "Random" }, SliceEngine::thruInput));
-
-    for (int step = 0; step < numSteps; ++step)
-        layout.add (makePercentParameter (chanceId (step), "Chance " + juce::String (step + 1), 50.0f));
-
-    // --- Longueur des boucles ---
-    layout.add (makeChoice (lengthModeId, "Length Mode", { "Free", "Sync" }, modeSync));
-    layout.add (makeChoice (maxDivisionId, "Max Length", getDivisionNames(), 12));   // 1/16
-    layout.add (makeChoice (minDivisionId, "Min Length", getDivisionNames(), 18));   // 1/64
-    layout.add (makeTimeParameter (maxTimeId, "Max Time", 100.0f));
-    layout.add (makeTimeParameter (minTimeId, "Min Time", 10.0f));
-    layout.add (makeSwitch (randomId, "Random Length", true));
-    layout.add (makeSwitch (allowTripletId, "Allow Triplets", true));
-    layout.add (makeSwitch (allowDottedId, "Allow Dotted", true));
-
-    // --- Enveloppe des slices (en part du pas) ---
     layout.add (makePercentParameter (attackId, "Attack", 0.0f));
-    layout.add (makePercentParameter (decayId, "Decay", 30.0f));
-    layout.add (makePercentParameter (sustainId, "Sustain", 100.0f));
     layout.add (makePercentParameter (releaseId, "Release", 10.0f));
+
+    // --- Longueur des boucles : tirée au hasard entre LONG et SHORT ---
+    layout.add (makeChoice (lengthModeId, "Length Mode", { "Free", "Sync" }, modeSync));
+    layout.add (makeChoice (maxDivisionId, "Long", getDivisionNames(), 12));    // 1/16
+    layout.add (makeChoice (minDivisionId, "Short", getDivisionNames(), 18));   // 1/64
+    layout.add (makeTimeParameter (maxTimeId, "Long Time", 100.0f));
+    layout.add (makeTimeParameter (minTimeId, "Short Time", 10.0f));
 
     // --- Pitch des slices ---
     layout.add (makeSwitch (pitchOnId, "Pitch On", false));
@@ -267,12 +248,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhractalAudioProcessor::crea
     layout.add (makeSwitch (gateId, "Gate", false));
     layout.add (makeChoice (gateDivisionId, "Gate Rate", getGateDivisionNames(), 4));   // 1/16
     layout.add (makeChoice (gateFeelId, "Gate Feel", { "Straight", "Triplet", "Dotted" }, straight));
-    layout.add (makeCount (gateStepsId, "Gate Steps", 2, numSteps, 16));
     layout.add (makePercentParameter (gateLengthId, "Gate Length", 75.0f));
     layout.add (makePercentParameter (gateSmoothId, "Gate Smooth", 10.0f));
-
-    for (int step = 0; step < numSteps; ++step)
-        layout.add (makeSwitch (gateStepId (step), "Gate Step " + juce::String (step + 1), step % 4 != 1));   // x.xx
 
     // --- Sortie ---
     layout.add (makeSwitch (filterId, "Filter", false));
@@ -317,17 +294,14 @@ PhractalAudioProcessor::PhractalAudioProcessor()
     sliceParam           = raw (sliceId);
     stepsParam           = raw (stepsId);
     thruParam            = raw (thruId);
+    chanceParam          = raw (chanceId);
+    durationParam        = raw (durationId);
     lengthModeParam      = raw (lengthModeId);
     maxDivisionParam     = raw (maxDivisionId);
     minDivisionParam     = raw (minDivisionId);
     maxTimeParam         = raw (maxTimeId);
     minTimeParam         = raw (minTimeId);
-    randomParam          = raw (randomId);
-    allowTripletParam    = raw (allowTripletId);
-    allowDottedParam     = raw (allowDottedId);
     attackParam          = raw (attackId);
-    decayParam           = raw (decayId);
-    sustainParam         = raw (sustainId);
     releaseParam         = raw (releaseId);
     pitchOnParam         = raw (pitchOnId);
     pitchParam           = raw (pitchId);
@@ -335,7 +309,6 @@ PhractalAudioProcessor::PhractalAudioProcessor()
     gateParam            = raw (gateId);
     gateDivisionParam    = raw (gateDivisionId);
     gateFeelParam        = raw (gateFeelId);
-    gateStepsParam       = raw (gateStepsId);
     gateLengthParam      = raw (gateLengthId);
     gateSmoothParam      = raw (gateSmoothId);
     filterParam          = raw (filterId);
@@ -346,12 +319,6 @@ PhractalAudioProcessor::PhractalAudioProcessor()
     limiterParam         = raw (limiterId);
     mixParam             = raw (mixId);
     levelParam           = raw (levelId);
-
-    for (int step = 0; step < numSteps; ++step)
-    {
-        chanceParams[step] = raw (chanceId (step));
-        gateStepParams[step] = raw (gateStepId (step));
-    }
 }
 
 bool PhractalAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -468,19 +435,17 @@ void PhractalAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     for (int step = 0; step < numSteps; ++step)
-        engine.setChance (step, 0.01f * value (chanceParams[step]));
+        engine.setChance (step, 0.01f * value (chanceParam));
 
     engine.setThru (choice (thruParam));
+    engine.setDuration (0.01 * value (durationParam));
 
-    // --- Longueur des boucles : une liste de valeurs de notes, ou une plage de durées ---
-    const bool random = isOn (randomParam);
-
+    // --- Longueur des boucles : une valeur de note tirée entre LONG et SHORT, ou une durée ---
     if (choice (lengthModeParam) == modeSync)
     {
         int indices[64];
         double lengths[64];
-        const int count = collectDivisions (choice (maxDivisionParam), choice (minDivisionParam), random,
-                                            isOn (allowTripletParam), isOn (allowDottedParam), indices);
+        const int count = collectDivisions (choice (maxDivisionParam), choice (minDivisionParam), indices);
 
         for (int i = 0; i < count; ++i)
             lengths[i] = getDivisionInBeats (indices[i]) * samplesPerBeat;
@@ -489,30 +454,20 @@ void PhractalAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        const double longest = (double) value (maxTimeParam) * samplesPerMs;
-
-        if (random)
-            engine.setLengthSpan ((double) value (minTimeParam) * samplesPerMs, longest);
-        else
-            engine.setLengthChoices (&longest, 1);
+        engine.setLengthSpan ((double) value (minTimeParam) * samplesPerMs, (double) value (maxTimeParam) * samplesPerMs);
     }
 
-    engine.setEnvelope (0.01 * value (attackParam), 0.01 * value (decayParam), 0.01 * value (sustainParam), 0.01 * value (releaseParam));
+    // Enveloppe : attaque et relâchement, maintien plein.
+    engine.setEnvelope (0.01 * value (attackParam), 0.0, 1.0, 0.01 * value (releaseParam));
 
     // --- Pitch des slices : en demi-tons entiers, ou libre ---
     const double semitones = (double) value (pitchParam);
     engine.setPitch (isOn (pitchOnParam) ? (choice (pitchModeParam) == 1 ? semitones : std::round (semitones)) : 0.0);
 
     // --- Gate ---
-    const int gateSteps = juce::jlimit (2, numSteps, choice (gateStepsParam));
+    // Un pulse régulier : chaque pas s'ouvre pendant LENGTH.
     const double gateStepBeats = getGateDivisionInBeats (choice (gateDivisionParam)) * getFeelFactor (choice (gateFeelParam));
-    std::uint32_t pattern = 0;
-
-    for (int step = 0; step < numSteps; ++step)
-        if (isOn (gateStepParams[step]))
-            pattern |= (std::uint32_t) 1u << step;
-
-    engine.setGate (gateSteps, gateStepBeats * samplesPerBeat, pattern, 0.01 * value (gateLengthParam), 0.01 * value (gateSmoothParam));
+    engine.setGate (2, gateStepBeats * samplesPerBeat, 0xffffffffu, 0.01 * value (gateLengthParam), 0.01 * value (gateSmoothParam));
     engine.setGateActive (isOn (gateParam));
 
     if (hostIsMoving)

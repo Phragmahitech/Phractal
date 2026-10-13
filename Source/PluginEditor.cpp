@@ -11,13 +11,12 @@ namespace
     using Ids = PhractalAudioProcessor;
     using Pt = juce::Point<float>;
 
-    // Façade : cinq modules côte à côte (SLICE, LOOP, PITCH, GATE, FILTER), tous bâtis sur la même grille,
-    // puis la séquence sur toute la largeur.
+    // Façade : cinq modules côte à côte (SLICE, LOOP, PITCH, GATE, FILTER), tous bâtis sur la même grille.
     constexpr int numColumns = 5, columnWidth = 222, columnGap = 14, firstColumnX = 26;
     constexpr int editorWidth = PhractalFacade::width, editorHeight = PhractalFacade::height;
     static_assert (editorWidth == 2 * firstColumnX + numColumns * columnWidth + (numColumns - 1) * columnGap, "largeur de la façade");
     constexpr int panelInset = 12, panelInnerWidth = columnWidth - 2 * panelInset;
-    constexpr int footerY = 766;
+    constexpr int footerY = 610;
 
     constexpr int columnX (int column)                  { return firstColumnX + column * (columnWidth + columnGap); }
 
@@ -28,11 +27,6 @@ namespace
     juce::Rectangle<int> buttonArea (int column)        { return { columnX (column), 364, columnWidth, 52 }; }
     juce::Rectangle<int> panelArea (int column)         { return { columnX (column), 430, columnWidth, 166 }; }
     juce::Rectangle<int> displayArea (int column)       { return { columnX (column) + panelInset, 458, panelInnerWidth, 44 }; }
-
-    // Séquence : un panneau sur toute la largeur, deux rangées de pas.
-    const juce::Rectangle<int> bandArea { firstColumnX, 610, editorWidth - 2 * firstColumnX, 142 };
-    const juce::Rectangle<int> chanceLaneArea { 132, 622, editorWidth - firstColumnX - 12 - 132, 66 };
-    const juce::Rectangle<int> gateLaneArea { 132, 700, editorWidth - firstColumnX - 12 - 132, 40 };
 
     // Interrupteurs d'une baie : pleine largeur, ou mode à gauche et variante à droite.
     constexpr int switchOffset = 16, fullSwitchWidth = columnWidth - 2 * switchOffset;
@@ -566,265 +560,51 @@ void PhractalLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b
 }
 
 //==============================================================================
-StepLane::StepLane (PhractalAudioProcessor& p, Kind k) : audioProcessor (p), kind (k)
-{
-    setComponentID (kind == chances ? "chances" : "gatePattern");
-    setRepaintsOnMouseActivity (false);
-    auto& apvts = audioProcessor.apvts;
-
-    for (int step = 0; step < Ids::numSteps; ++step)
-    {
-        auto* parameter = apvts.getParameter (kind == chances ? Ids::chanceId (step) : Ids::gateStepId (step));
-        attachments[step] = std::make_unique<juce::ParameterAttachment> (*parameter, [this, step] (float value)
-        {
-            values[step] = value;
-            repaint();
-        });
-    }
-
-    countAttachment = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (kind == chances ? Ids::stepsId : Ids::gateStepsId),
-                                                                   [this] (float value)
-                                                                   {
-                                                                       numShown = juce::jlimit (1, Ids::numSteps, juce::roundToInt (value));
-                                                                       repaint();
-                                                                   });
-
-    powerAttachment = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (kind == chances ? Ids::sliceId : Ids::gateId),
-                                                                   [this] (float value)
-                                                                   {
-                                                                       powered = value > 0.5f;
-                                                                       repaint();
-                                                                   });
-
-    if (kind == gate)
-        extraAttachment = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (Ids::gateLengthId), [this] (float value)
-        {
-            gateLength = 0.01f * value;
-            repaint();
-        });
-
-    for (auto& attachment : attachments)
-        attachment->sendInitialUpdate();
-
-    countAttachment->sendInitialUpdate();
-    powerAttachment->sendInitialUpdate();
-
-    if (extraAttachment != nullptr)
-        extraAttachment->sendInitialUpdate();
-
-    startTimerHz (30);
-}
-
-StepLane::~StepLane()
-{
-    stopTimer();
-    finishGestures();
-}
-
-void StepLane::refresh()
-{
-    const auto& engine = audioProcessor.getEngine();
-    const int step = ! powered ? -1 : kind == chances ? engine.getCurrentStep() : engine.getGateStep();
-    const auto mask = kind == chances ? engine.getSlicedMask() : 0u;
-
-    if (step != lastStep || mask != lastMask)
-    {
-        lastStep = step;
-        lastMask = mask;
-        repaint();
-    }
-}
-
-juce::Rectangle<float> StepLane::cellArea (int step) const
-{
-    const auto area = getLocalBounds().toFloat().reduced (6.0f, 5.0f);
-    const float cell = area.getWidth() / (float) numShown;
-    return { area.getX() + cell * (float) step, area.getY(), cell, area.getHeight() };
-}
-
-int StepLane::stepAt (float x) const
-{
-    const auto area = getLocalBounds().toFloat().reduced (6.0f, 5.0f);
-    return juce::jlimit (0, numShown - 1, (int) std::floor ((x - area.getX()) / area.getWidth() * (float) numShown));
-}
-
-void StepLane::edit (const juce::MouseEvent& event, bool first)
-{
-    const int step = stepAt (event.position.x);
-    const auto area = cellArea (step);
-
-    if (kind == gate && first)
-        paintValue = values[step] > 0.5f ? 0.0f : 1.0f;   // on peint l'inverse de la première case touchée
-
-    // Chance : la hauteur du clic. Les 3 px du haut et du bas valent 100 % et 0 % : on y arrive sans viser au pixel.
-    const auto band = area.reduced (0.0f, 3.0f);
-    const float value = kind == chances
-        ? std::round (juce::jlimit (0.0f, 100.0f, 100.0f * (band.getBottom() - event.position.y) / band.getHeight()))
-        : paintValue;
-
-    // Tous les pas entre le précédent et celui-ci : un geste rapide ne laisse pas de trou.
-    const int from = (first || editingStep < 0) ? step : juce::jmin (editingStep, step);
-    const int to = (first || editingStep < 0) ? step : juce::jmax (editingStep, step);
-
-    for (int s = from; s <= to; ++s)
-    {
-        if (! touched[s])
-        {
-            touched[s] = true;
-            attachments[s]->beginGesture();
-        }
-
-        attachments[s]->setValueAsPartOfGesture (value);
-    }
-
-    editingStep = step;
-}
-
-void StepLane::finishGestures()
-{
-    for (int s = 0; s < Ids::numSteps; ++s)
-    {
-        if (touched[s])
-        {
-            touched[s] = false;
-            attachments[s]->endGesture();
-        }
-    }
-
-    editingStep = -1;
-}
-
-void StepLane::mouseDown (const juce::MouseEvent& event)    { edit (event, true); }
-void StepLane::mouseDrag (const juce::MouseEvent& event)    { edit (event, false); }
-void StepLane::mouseUp (const juce::MouseEvent&)            { finishGestures(); }
-
-void StepLane::mouseDoubleClick (const juce::MouseEvent& event)
-{
-    if (kind == chances)   // double-clic : la chance revient à 50 %
-        attachments[stepAt (event.position.x)]->setValueAsCompleteGesture (50.0f);
-}
-
-void StepLane::paint (juce::Graphics& g)
-{
-    // L'écran en creux est dessiné par le fond ; ici, les pas.
-    const auto whole = getLocalBounds().toFloat().reduced (6.0f, 5.0f);
-    const auto gradient = LF::accentGradient (whole.getTopLeft(), whole.getTopRight());
-    const bool groupsOfFour = numShown % 4 == 0 && numShown > 4;
-
-    for (int step = 0; step < numShown; ++step)
-    {
-        const auto cell = cellArea (step);
-
-        // Séparations : plus marquées entre les groupes de quatre pas.
-        if (step > 0)
-        {
-            g.setColour (groupsOfFour && step % 4 == 0 ? juce::Colour (0xffa9b4c2) : juce::Colour (0xffdde2e9));
-            g.fillRect (juce::Rectangle<float> (cell.getX() - 0.5f, cell.getY(), 1.0f, cell.getHeight()));
-        }
-
-        if (step == lastStep)   // le pas en cours
-        {
-            g.setColour (LF::cyan().withAlpha (0.13f));
-            g.fillRect (cell);
-        }
-
-        const auto inner = cell.reduced (juce::jmin (3.0f, cell.getWidth() * 0.12f), 0.0f);
-
-        if (kind == chances)
-        {
-            const float level = juce::jlimit (0.0f, 1.0f, 0.01f * values[step]);
-            const auto bar = inner.withTop (inner.getBottom() - level * inner.getHeight());
-
-            if (level > 0.0f)
-            {
-                if (powered)
-                    g.setGradientFill (gradient);
-                else
-                    g.setColour (LF::standby().withAlpha (0.75f));
-
-                g.fillRect (bar.withTop (juce::jmin (bar.getY(), inner.getBottom() - 1.5f)));
-            }
-
-            // Ce pas est devenu une slice au dernier passage : un repère en haut.
-            if (powered && ((lastMask >> step) & 1u) != 0)
-            {
-                g.setColour (LF::ink());
-                g.fillRect (juce::Rectangle<float> (inner.getWidth() * 0.6f, 2.5f).withCentre ({ inner.getCentreX(), inner.getY() + 1.5f }));
-            }
-        }
-        else
-        {
-            const bool on = values[step] > 0.5f;
-            const auto box = inner.reduced (0.0f, 2.0f);
-            const auto open = box.withWidth (juce::jmax (3.0f, box.getWidth() * juce::jlimit (0.0f, 1.0f, gateLength)));
-
-            if (on)
-            {
-                if (powered)
-                    g.setGradientFill (gradient);
-                else
-                    g.setColour (LF::standby().withAlpha (0.75f));
-
-                g.fillRect (open);
-            }
-            else
-            {
-                g.setColour (juce::Colour (0xffc7d0db));
-                g.drawRect (box, 1.0f);
-            }
-        }
-    }
-}
-
-//==============================================================================
 PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
-    : audioProcessor (p),
-      chanceLane (p, StepLane::chances),
-      gateLane (p, StepLane::gate)
+    : audioProcessor (p)
 {
     setLookAndFeel (&lookAndFeel);
     setSize (width, height);
 
     auto& apvts = audioProcessor.apvts;
 
-    // Grands potards : un par module (deux superposés pour la longueur : divisions ou durées).
-    configureMainKnob (stepsKnob, Ids::stepsId, 0);
+    // Grands potards : un par module (deux superposés pour LONG : note ou durée).
+    configureMainKnob (chanceKnob, Ids::chanceId, 0);
     configureMainKnob (maxDivisionKnob, Ids::maxDivisionId, 1);
     configureMainKnob (maxTimeKnob, Ids::maxTimeId, 1);
     configureMainKnob (pitchKnob, Ids::pitchId, 2);
     configureMainKnob (gateRateKnob, Ids::gateDivisionId, 3);
     configureMainKnob (cutoffKnob, Ids::filterCutoffId, 4);
 
-    for (auto* knob : { &stepsKnob, &pitchKnob, &gateRateKnob, &cutoffKnob })
+    for (auto* knob : { &chanceKnob, &pitchKnob, &gateRateKnob, &cutoffKnob })
         knob->setVisible (true);
 
     // Petits potards des panneaux du bas
-    configureMiniKnob (attackKnob, Ids::attackId, "ATT", miniKnobArea (0, 0, 4));
-    configureMiniKnob (decayKnob, Ids::decayId, "DEC", miniKnobArea (0, 1, 4));
-    configureMiniKnob (sustainKnob, Ids::sustainId, "SUS", miniKnobArea (0, 2, 4));
-    configureMiniKnob (releaseKnob, Ids::releaseId, "REL", miniKnobArea (0, 3, 4));
-    configureMiniKnob (minDivisionKnob, Ids::minDivisionId, "MIN", miniKnobArea (1, 0, 3));
-    configureMiniKnob (minTimeKnob, Ids::minTimeId, "MIN", miniKnobArea (1, 0, 3));
+    configureMiniKnob (stepsKnob, Ids::stepsId, "GRID", miniKnobArea (0, 0, 4));
+    configureMiniKnob (durationKnob, Ids::durationId, "DUR", miniKnobArea (0, 1, 4));
+    configureMiniKnob (attackKnob, Ids::attackId, "ATTACK", miniKnobArea (0, 2, 4));
+    configureMiniKnob (releaseKnob, Ids::releaseId, "RELEASE", miniKnobArea (0, 3, 4));
+    configureMiniKnob (minDivisionKnob, Ids::minDivisionId, "SHORT", miniKnobArea (1, 0, 1));
+    configureMiniKnob (minTimeKnob, Ids::minTimeId, "SHORT", miniKnobArea (1, 0, 1));
     configureMiniKnob (mixKnob, Ids::mixId, "MIX", miniKnobArea (2, 0, 3));
     configureMiniKnob (levelKnob, Ids::levelId, "LEVEL", miniKnobArea (2, 1, 3));
-    configureMiniKnob (gateStepsKnob, Ids::gateStepsId, "STEPS", miniKnobArea (3, 0, 3));
-    configureMiniKnob (gateLengthKnob, Ids::gateLengthId, "LENGTH", miniKnobArea (3, 1, 3));
-    configureMiniKnob (gateSmoothKnob, Ids::gateSmoothId, "SMOOTH", miniKnobArea (3, 2, 3));
+    configureMiniKnob (gateLengthKnob, Ids::gateLengthId, "LENGTH", miniKnobArea (3, 0, 2));
+    configureMiniKnob (gateSmoothKnob, Ids::gateSmoothId, "SMOOTH", miniKnobArea (3, 1, 2));
     configureMiniKnob (resonanceKnob, Ids::filterResonanceId, "RESO", miniKnobArea (4, 1, 3));
 
     for (int column = 0; column < numColumns; ++column)
         configureValueLabel (valueLabels[column], column);
 
     // Grands boutons : des bascules. Les lumières de chaque module suivent son état.
-    configureBigToggle (sliceButton, Ids::sliceId, 0, [this] (bool on) { sliceOn = on; setStandby (stepsKnob, ! on); });
-    configureBigToggle (randomButton, Ids::randomId, 1, [this] (bool on) { randomOn = on; modesChanged(); });
+    configureBigToggle (sliceButton, Ids::sliceId, 0, [this] (bool on) { sliceOn = on; setStandby (chanceKnob, ! on); });
+    configureBigToggle (syncButton, Ids::lengthModeId, 1, [this] (bool on) { syncOn = on; modesChanged(); });
     configureBigToggle (pitchButton, Ids::pitchOnId, 2, [this] (bool on) { pitchOn = on; setStandby (pitchKnob, ! on); });
     configureBigToggle (gateButton, Ids::gateId, 3, [this] (bool on)
     {
         gateOn = on;
         setStandby (gateRateKnob, ! on);
 
-        for (auto* knob : { &gateStepsKnob, &gateLengthKnob, &gateSmoothKnob })
+        for (auto* knob : { &gateLengthKnob, &gateSmoothKnob })
             setStandby (*knob, ! on);
     });
     configureBigToggle (filterButton, Ids::filterId, 4, [this] (bool on)
@@ -835,10 +615,8 @@ PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
     });
 
     // Interrupteurs des baies
-    configureSwitch (thruSwitch, Ids::thruId, { "SILENT", "INPUT", "RANDOM" }, switchArea (0, 62, columnWidth - 62 - switchOffset), true,
-                     [this] (int) { repaint(); });
-    configureSwitch (lengthModeSwitch, Ids::lengthModeId, { "FREE", "SYNC" }, switchArea (1, switchOffset, fullSwitchWidth), false,
-                     [this] (int choice) { lengthMode = choice; modesChanged(); });
+    configureSwitch (thruSwitch, Ids::thruId, { "OFF", "ON", "RANDOM" }, switchArea (0, 62, columnWidth - 62 - switchOffset), true,
+                     [this] (int choice) { thruMode = choice; repaint(); });
     configureSwitch (pitchModeSwitch, Ids::pitchModeId, { "SEMI", "FREE" }, switchArea (2, switchOffset, fullSwitchWidth), false,
                      [this] (int choice) { pitchInSemitones = choice == 0; updateValueLabels(); repaint(); });
     configureSwitch (gateFeelSwitch, Ids::gateFeelId, { "STRAIGHT", "TRIPLET", "DOTTED" }, switchArea (3, switchOffset, fullSwitchWidth), true,
@@ -847,10 +625,6 @@ PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
                      [this] (int choice) { filterType = choice; repaint(); });
     configureSwitch (filterSlopeSwitch, Ids::filterSlopeId, { "12 dB", "24 dB" }, switchArea (4, 132, 74), true,
                      [this] (int choice) { steepFilter = choice == 1; repaint(); });
-
-    // Panneau RANGE : triolets et pointées dans le tirage
-    configureSmallToggle (tripletButton, Ids::allowTripletId, panelKeyArea (1, 0, 2), [this] (bool on) { tripletsAllowed = on; repaint(); });
-    configureSmallToggle (dottedButton, Ids::allowDottedId, panelKeyArea (1, 1, 2), [this] (bool on) { dottedAllowed = on; repaint(); });
 
     // Panneau OUTPUT
     configureSmallToggle (limiterButton, Ids::limiterId, panelKeyArea (2, 0, 1));
@@ -866,25 +640,11 @@ PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
             pitchAttachment->setValueAsCompleteGesture (std::round (value));
     };
 
-    // Séquence
-    addAndMakeVisible (chanceLane);
-    chanceLane.setBounds (chanceLaneArea);
-    addAndMakeVisible (gateLane);
-    gateLane.setBounds (gateLaneArea);
-
-    // Ce que les afficheurs dessinent dépend aussi de ces réglages.
-    for (const char* id : { Ids::attackId, Ids::decayId, Ids::sustainId, Ids::releaseId, Ids::gateStepsId, Ids::gateLengthId, Ids::gateSmoothId })
-        stateWatchers.push_back (std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (id), [this] (float) { repaint(); }));
-
-    for (int step = 0; step < Ids::numSteps; ++step)
-        stateWatchers.push_back (std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (Ids::gateStepId (step)),
-                                                                              [this] (float) { repaint (displayArea (3)); }));
-
     // Tout est en place : on aligne l'interface sur les paramètres.
     for (auto& watcher : stateWatchers)
         watcher->sendInitialUpdate();
 
-    for (auto* selector : { &thruSwitch, &lengthModeSwitch, &pitchModeSwitch, &gateFeelSwitch, &filterTypeSwitch, &filterSlopeSwitch })
+    for (auto* selector : { &thruSwitch, &pitchModeSwitch, &gateFeelSwitch, &filterTypeSwitch, &filterSlopeSwitch })
         selector->attachment->sendInitialUpdate();
 
     modesChanged();
@@ -1027,8 +787,8 @@ juce::Slider& PhractalFacade::activeKnob (int column)
 {
     switch (column)
     {
-        case 0:   return stepsKnob;
-        case 1:   return lengthMode == Ids::modeSync ? maxDivisionKnob : maxTimeKnob;
+        case 0:   return chanceKnob;
+        case 1:   return syncOn ? maxDivisionKnob : maxTimeKnob;
         case 2:   return pitchKnob;
         case 3:   return gateRateKnob;
         default:  return cutoffKnob;
@@ -1041,7 +801,7 @@ void PhractalFacade::setStandby (juce::Slider& knob, bool standby)
     knob.getProperties().set ("standby", standby);
 
     for (int column = 0; column < numColumns; ++column)
-        if (knob.getBounds() == knobArea (column))
+        if (knob.getBounds() == knobArea (column) && knob.isVisible())
             valueLabels[column].setColour (juce::Label::textColourId, standby ? LF::dimInk() : LF::ink());
 
     knob.repaint();
@@ -1049,22 +809,14 @@ void PhractalFacade::setStandby (juce::Slider& knob, bool standby)
 
 void PhractalFacade::modesChanged()
 {
-    const bool synced = lengthMode == Ids::modeSync;
+    maxDivisionKnob.setVisible (syncOn);
+    maxTimeKnob.setVisible (! syncOn);
+    minDivisionKnob.setVisible (syncOn);
+    minTimeKnob.setVisible (! syncOn);
 
-    maxDivisionKnob.setVisible (synced);
-    maxTimeKnob.setVisible (! synced);
-    minDivisionKnob.setVisible (synced);
-    minTimeKnob.setVisible (! synced);
-
-    // Sans tirage, la boucle fait toujours MAX : MIN, triolets et pointées ne servent pas.
-    setStandby (minDivisionKnob, ! randomOn);
-    setStandby (minTimeKnob, ! randomOn);
-    tripletButton.setEnabled (synced && randomOn);
-    dottedButton.setEnabled (synced && randomOn);
-
-    // Les durées, les hauteurs et les fréquences se tapent au clavier ; les divisions et les nombres de pas se choisissent au potard.
-    valueLabels[0].setEditable (false, false, false);
-    valueLabels[1].setEditable (! synced, false, false);
+    // Les pourcentages, durées, hauteurs et fréquences se tapent au clavier ; les divisions se choisissent au potard.
+    valueLabels[0].setEditable (true, false, false);
+    valueLabels[1].setEditable (! syncOn, false, false);
     valueLabels[2].setEditable (true, false, false);
     valueLabels[3].setEditable (false, false, false);
     valueLabels[4].setEditable (true, false, false);
@@ -1175,7 +927,7 @@ void PhractalFacade::paintBackground (juce::Graphics& g)
         g.strokePath (*seam, juce::PathStrokeType (1.2f));
     }
 
-    static const char* const panelTitles[numColumns] = { "ENVELOPE", "RANGE", "OUTPUT", "GATE SHAPE", "RESPONSE" };
+    static const char* const panelTitles[numColumns] = { "SLICE SHAPE", "RANGE", "OUTPUT", "GATE SHAPE", "RESPONSE" };
 
     const auto drawPanel = [&g] (juce::Rectangle<float> panel)
     {
@@ -1218,11 +970,6 @@ void PhractalFacade::paintBackground (juce::Graphics& g)
 
         LF::drawScreen (g, displayArea (column).toFloat(), 6.0f);
     }
-
-    // Séquence : un panneau sur toute la largeur, deux écrans.
-    drawPanel (bandArea.toFloat());
-    LF::drawScreen (g, chanceLaneArea.toFloat(), 7.0f);
-    LF::drawScreen (g, gateLaneArea.toFloat(), 6.0f);
 
     // Libellé THRU devant son interrupteur
     g.setColour (LF::dimInk());
@@ -1283,7 +1030,7 @@ void PhractalFacade::paintBackground (juce::Graphics& g)
 
 void PhractalFacade::paintLights (juce::Graphics& g)
 {
-    const bool moduleOn[numColumns] = { sliceOn, randomOn, pitchOn, gateOn, filterOn };
+    const bool moduleOn[numColumns] = { sliceOn, syncOn, pitchOn, gateOn, filterOn };
     const float pipY = (float) footerY + 11.0f;
 
     // Trait éteint : une rainure (reflet clair dessous).
@@ -1361,7 +1108,6 @@ void PhractalFacade::paintRange (juce::Graphics& g, juce::Rectangle<float> area)
     // Haut : la plage, en notes (ou en ms) et en durées au tempo actuel ; une boucle très courte est donnée en Hz.
     // Bas : toutes les longueurs possibles, celles du tirage allumées, la dernière tirée marquée.
     const double secondsPerBeat = 60.0 / juce::jmax (1.0, shownBpm);
-    const bool synced = lengthMode == Ids::modeSync;
     const auto textArea = area.removeFromTop (14.0f);
     const auto axis = area.reduced (2.0f, 0.0f).withTrimmedTop (4.0f);
 
@@ -1373,23 +1119,22 @@ void PhractalFacade::paintRange (juce::Graphics& g, juce::Rectangle<float> area)
     double longestSeconds = 0.0, shortestSeconds = 0.0;
     juce::String span;
 
-    if (synced)
+    if (syncOn)
     {
-        const int longest = juce::roundToInt (maxDivisionKnob.getValue()), shortest = juce::roundToInt (minDivisionKnob.getValue());
+        const int a = juce::roundToInt (maxDivisionKnob.getValue()), b = juce::roundToInt (minDivisionKnob.getValue());
+        const int longest = juce::jmin (a, b), shortest = juce::jmax (a, b);   // un indice plus grand = plus court
         const auto& names = Ids::getDivisionNames();
         longestSeconds = Ids::getDivisionInBeats (longest) * secondsPerBeat;
-        shortestSeconds = Ids::getDivisionInBeats (randomOn ? shortest : longest) * secondsPerBeat;
-        span = randomOn && shortest != longest ? names[longest] + " - " + names[shortest] : names[longest];
+        shortestSeconds = Ids::getDivisionInBeats (shortest) * secondsPerBeat;
+        span = shortest != longest ? names[longest] + " - " + names[shortest] : names[longest];
 
-        int indices[64];
-        const int count = Ids::collectDivisions (longest, shortest, randomOn, tripletsAllowed, dottedAllowed, indices);
         const int numDivisions = Ids::getNumDivisions();
 
         for (int i = 0; i < numDivisions; ++i)
         {
             const float x = axis.getX() + axis.getWidth() * (float) i / (float) (numDivisions - 1);
             const bool straight = Ids::getDivisionFeel (i) == Ids::straight;
-            const bool chosen = std::find (indices, indices + count, i) != indices + count;
+            const bool chosen = i >= longest && i <= shortest;
             const float tick = straight ? axis.getHeight() * 0.7f : axis.getHeight() * 0.4f;
             const auto mark = juce::Rectangle<float> (chosen ? 2.6f : 1.2f, tick).withCentre ({ x, axis.getBottom() - tick * 0.5f });
 
@@ -1399,13 +1144,14 @@ void PhractalFacade::paintRange (juce::Graphics& g, juce::Rectangle<float> area)
     }
     else
     {
-        const double longest = maxTimeKnob.getValue(), shortest = randomOn ? minTimeKnob.getValue() : longest;
+        const double a = maxTimeKnob.getValue(), b = minTimeKnob.getValue();
+        const double longest = juce::jmax (a, b), shortest = juce::jmin (a, b);
         longestSeconds = 0.001 * longest;
         shortestSeconds = 0.001 * shortest;
-        span = randomOn ? compactValue (minTimeKnob.getTextFromValue (shortest)) + " - " + compactValue (maxTimeKnob.getTextFromValue (longest))
-                        : compactValue (maxTimeKnob.getTextFromValue (longest));
+        span = juce::approximatelyEqual (a, b) ? compactValue (maxTimeKnob.getTextFromValue (longest))
+                                               : compactValue (minTimeKnob.getTextFromValue (shortest)) + " - " + compactValue (maxTimeKnob.getTextFromValue (longest));
 
-        // Axe logarithmique de 1 s (gauche) à 0,1 ms (droite), comme le potard.
+        // Axe logarithmique de 1 s (gauche) à 0,1 ms (droite), comme les potards.
         const auto xFor = [axis] (double ms)
         {
             const double position = std::log (1000.0 / juce::jlimit (0.1, 1000.0, ms)) / std::log (10000.0);
@@ -1418,7 +1164,7 @@ void PhractalFacade::paintRange (juce::Graphics& g, juce::Rectangle<float> area)
             g.fillRect (juce::Rectangle<float> (1.2f, axis.getHeight() * 0.7f).withCentre ({ xFor (decade), axis.getBottom() - axis.getHeight() * 0.35f }));
         }
 
-        const float from = xFor (juce::jmax (longest, shortest)), to = xFor (juce::jmin (longest, shortest));
+        const float from = xFor (longest), to = xFor (shortest);
         const auto bar = juce::Rectangle<float> (from, axis.getBottom() - axis.getHeight() * 0.5f, juce::jmax (2.6f, to - from), axis.getHeight() * 0.3f);
 
         if (sliceOn)
@@ -1433,18 +1179,8 @@ void PhractalFacade::paintRange (juce::Graphics& g, juce::Rectangle<float> area)
     if (shownLength > 0.0 && sliceOn)
     {
         const double seconds = shownLength / juce::jmax (1.0, audioProcessor.getCurrentSampleRate());
-        double position;
-
-        if (synced)
-        {
-            const double beats = seconds / secondsPerBeat;
-            position = std::log (4.0 / juce::jmax (1.0e-6, beats)) / std::log (4096.0);   // 1/1 à gauche, 1/4096 à droite
-        }
-        else
-        {
-            position = std::log (1.0 / juce::jlimit (1.0e-4, 1.0, seconds)) / std::log (10000.0);
-        }
-
+        const double position = syncOn ? std::log (4.0 / juce::jmax (1.0e-6, seconds / secondsPerBeat)) / std::log (4096.0)   // 1/1 à gauche, 1/4096 à droite
+                                       : std::log (1.0 / juce::jlimit (1.0e-4, 1.0, seconds)) / std::log (10000.0);
         const float x = axis.getX() + (float) juce::jlimit (0.0, 1.0, position) * axis.getWidth();
         juce::Path marker;
         marker.addTriangle (x - 3.5f, axis.getY() - 3.0f, x + 3.5f, axis.getY() - 3.0f, x, axis.getY() + 2.5f);
@@ -1499,7 +1235,7 @@ void PhractalFacade::paintModules (juce::Graphics& g)
 {
     // --- Libellés des afficheurs ---
     {
-        static const char* const names[numColumns] = { "STEPS", "MAX", "PITCH", "RATE", "CUTOFF" };
+        const char* const names[numColumns] = { "CHANCE", "LONG", "PITCH", "RATE", "CUTOFF" };
 
         g.setColour (LF::dimInk());
         g.setFont (lookAndFeel.font (10.0f, false, 0.12f));
@@ -1508,19 +1244,26 @@ void PhractalFacade::paintModules (juce::Graphics& g)
             g.drawText (names[column], readoutArea (column).withTrimmedLeft (13), juce::Justification::centredLeft, false);
     }
 
-    // --- Enveloppe d'une slice, sur la durée d'un pas ---
+    // --- Ce que règle le module LOOP, dans la rangée des interrupteurs ---
+    g.setColour (LF::dimInk());
+    g.setFont (lookAndFeel.font (9.0f, false, 0.12f));
+    g.drawText (syncOn ? "NOTE VALUES  1/1 - 1/4096" : "MILLISECONDS  1 S - 0.1 MS", switchArea (1, switchOffset, fullSwitchWidth),
+                juce::Justification::centred, false);
+
+    // --- Une slice sur un pas : l'enveloppe pendant DURATION, puis ce que THRU laisse passer (pointillé) ---
     {
         const auto plot = displayArea (0).toFloat().reduced (9.0f, 7.0f);
-        const double a = attackKnob.getValue() * 0.01, d = decayKnob.getValue() * 0.01;
-        const double s = sustainKnob.getValue() * 0.01, r = releaseKnob.getValue() * 0.01;
+        const double duration = durationKnob.getValue() * 0.01;
+        const double a = attackKnob.getValue() * 0.01, r = releaseKnob.getValue() * 0.01;
         const int numPoints = 120;
+        const float durationX = plot.getX() + (float) duration * plot.getWidth();
         juce::Path curve;
 
         for (int i = 0; i <= numPoints; ++i)
         {
             const double phase = (double) i / numPoints;
-            const Pt point { plot.getX() + (float) phase * plot.getWidth(),
-                             plot.getBottom() - (float) SliceEngine::envelopeAt (phase, a, d, s, r, 0.02) * plot.getHeight() };
+            const Pt point { plot.getX() + (float) (phase * duration) * plot.getWidth(),
+                             plot.getBottom() - (float) SliceEngine::envelopeAt (phase, a, 0.0, 1.0, r, 0.02) * plot.getHeight() };
 
             if (i == 0)
                 curve.startNewSubPath (point);
@@ -1529,6 +1272,14 @@ void PhractalFacade::paintModules (juce::Graphics& g)
         }
 
         plotCurve (g, plot, curve, sliceOn);
+
+        if (duration < 0.995 && thruMode != 0)
+        {
+            const float y = thruMode == 1 ? plot.getY() + 2.0f : plot.getCentreY();   // RANDOM : à mi-hauteur, une fois sur deux
+            const float dashes[] = { 3.0f, 3.0f };
+            g.setColour (LF::standby());
+            g.drawDashedLine ({ durationX + 3.0f, y, plot.getRight(), y }, dashes, 2, 1.4f);
+        }
     }
 
     // --- Plage des longueurs ---
@@ -1537,13 +1288,13 @@ void PhractalFacade::paintModules (juce::Graphics& g)
     // --- Niveaux ---
     paintMeters (g, displayArea (2).toFloat().reduced (10.0f, 6.0f));
 
-    // --- Gate : le niveau sur tout le motif, calculé comme le moteur (ouverture, longueur, lissage) ---
+    // --- Gate : le niveau sur quatre pas, calculé comme le moteur (ouverture, longueur, lissage) ---
     {
         const auto plot = displayArea (3).toFloat().reduced (9.0f, 7.0f);
-        const int numGateSteps = juce::roundToInt (gateStepsKnob.getValue());
+        const int numSteps = 4;
         const double length = gateLengthKnob.getValue() * 0.01, smooth = gateSmoothKnob.getValue() * 0.01;
-        const int numPoints = 220;
-        const double perPoint = (double) numGateSteps / numPoints;              // en pas
+        const int numPoints = 200;
+        const double perPoint = (double) numSteps / numPoints;                  // en pas
         const double slope = perPoint / juce::jmax (0.004, smooth * 0.5);      // une rampe de lissage x 0,5 pas
         double gain = 0.0;
         juce::Path curve;
@@ -1553,10 +1304,8 @@ void PhractalFacade::paintModules (juce::Graphics& g)
         {
             for (int i = 0; i <= numPoints; ++i)
             {
-                const double position = juce::jmin ((double) numGateSteps - 1.0e-9, (double) i * perPoint);
-                const int step = (int) position;
-                const bool on = audioProcessor.apvts.getRawParameterValue (Ids::gateStepId (step))->load() > 0.5f;
-                const double target = on && position - step < length ? 1.0 : 0.0;
+                const double position = juce::jmin ((double) numSteps - 1.0e-9, (double) i * perPoint);
+                const double target = position - std::floor (position) < length ? 1.0 : 0.0;
                 gain = target > gain ? juce::jmin (target, gain + slope) : juce::jmax (target, gain - slope);
 
                 if (pass == 1)
@@ -1599,35 +1348,11 @@ void PhractalFacade::paintModules (juce::Graphics& g)
         plotCurve (g, plot, curve, filterOn);
     }
 
-    // --- Séquence : libellés à gauche des deux rangées ---
-    {
-        const auto labelColumn = [] (juce::Rectangle<int> lane) { return juce::Rectangle<int> (firstColumnX + 14, lane.getY(), 88, lane.getHeight()); };
-        const int steps = juce::roundToInt (stepsKnob.getValue());
-        const int gateSteps = juce::roundToInt (gateStepsKnob.getValue());
-
-        for (int row = 0; row < 2; ++row)
-        {
-            // Titre et sous-titre, centrés ensemble sur la hauteur de la rangée.
-            const auto area = labelColumn (row == 0 ? chanceLaneArea : gateLaneArea).toFloat();
-            const auto title = juce::Rectangle<float> (area.getX(), area.getCentreY() - 15.0f, area.getWidth(), 16.0f);
-
-            g.setColour (LF::ink());
-            g.setFont (lookAndFeel.font (12.0f, true, 0.14f));
-            g.drawText (row == 0 ? "CHANCE" : "GATE", title, juce::Justification::centredLeft, false);
-
-            g.setColour (LF::dimInk());
-            g.setFont (lookAndFeel.font (9.0f, false, 0.08f));
-            g.drawText (row == 0 ? juce::String (steps) + (steps > 1 ? " STEPS / BAR" : " STEP / BAR")
-                                 : juce::String (gateSteps) + " x " + valueLabels[3].getText(),
-                        title.translated (0.0f, 16.0f).withHeight (13.0f), juce::Justification::centredLeft, false);
-        }
-    }
-
     // Valeurs des petits potards (leurs noms sont dans le fond)
     g.setFont (lookAndFeel.font (10.5f, true));
 
-    for (auto* knob : { &attackKnob, &decayKnob, &sustainKnob, &releaseKnob, lengthMode == Ids::modeSync ? &minDivisionKnob : &minTimeKnob,
-                        &mixKnob, &levelKnob, &gateStepsKnob, &gateLengthKnob, &gateSmoothKnob, &resonanceKnob })
+    for (auto* knob : { &stepsKnob, &durationKnob, &attackKnob, &releaseKnob, syncOn ? &minDivisionKnob : &minTimeKnob,
+                        &mixKnob, &levelKnob, &gateLengthKnob, &gateSmoothKnob, &resonanceKnob })
     {
         const bool standby = (bool) knob->getProperties().getWithDefault ("standby", false);
         g.setColour (standby ? LF::dimInk() : LF::ink());

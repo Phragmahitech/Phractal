@@ -30,15 +30,15 @@ Windows (64 bits)
 Utilisation
 -----------
 Phractal se pose en insert. Allume SLICE : a chaque pas de la mesure, un tirage
-au sort (la chance du pas, dessinee dans la rangee CHANCE) decide si le son qui
-entre est enregistre et rejoue en boucle jusqu'a la fin du pas. La longueur de
-la boucle est tiree entre MIN et MAX. Eteint, le son passe intact.
+au sort (CHANCE) decide si le son qui entre est enregistre et rejoue en boucle
+pendant DUR. La longueur de la boucle est tiree entre LONG et SHORT. Eteint, le
+son passe intact.
 
-SLICE    STEPS (1 a 32 pas par mesure), THRU (ce qui passe entre les slices),
-         ENVELOPE (attaque, declin, maintien, relachement de chaque slice).
-LOOP     MAX et MIN (SYNC : 1/1 a 1/4096 ; FREE : 1 s a 0,1 ms), RANDOM
-         (eteint : toujours MAX), TRIPLET / DOTTED (admis dans le tirage).
+SLICE    CHANCE, THRU (OFF / ON / RANDOM), GRID (1 a 32 pas par mesure),
+         DUR (part du pas), ATTACK, RELEASE.
+LOOP     LONG et SHORT ; SYNC allume : 1/1 a 1/4096, eteint : 1 s a 0,1 ms.
          Une boucle tres courte devient une note.
-PITCH    Transpose les slices de -24 a +24 demi-tons (SEMI ou FREE).
-GATE     Gate rythmique : RATE, STEPS, LENGTH, SMOOTH ; motif dans la rangee GATE.
-FILTER   HP / BP / LP, 12 ou 24 dB, RESO. OUTPUT : MIX, LEVEL, LIMITER.
+PITCH    Transpose les slices de -48 a +48 demi-tons (SEMI ou FREE).
+         OUTPUT : MIX, LEVEL, LIMITER.
+GATE     Pulse regulier : RATE, LENGTH, SMOOTH.
+FILTER   HP / BP / LP, 12 ou 24 dB, RESO.

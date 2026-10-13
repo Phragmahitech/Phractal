@@ -11,27 +11,21 @@ public:
     //==========================================================================
     // Identifiants des paramètres (ne pas les renommer : les projets DAW sauvegardés en dépendent)
 
-    // Grille des slices
+    // Slices
     static constexpr const char* sliceId          = "slice";
     static constexpr const char* stepsId          = "steps";
+    static constexpr const char* chanceId         = "chance";
+    static constexpr const char* durationId       = "duration";
     static constexpr const char* thruId           = "thru";
-    // + "chance1" à "chance32" (voir chanceId)
+    static constexpr const char* attackId         = "attack";
+    static constexpr const char* releaseId        = "release";
 
-    // Longueur des boucles
+    // Longueur des boucles : tirée entre LONG (maxDivision / maxTime) et SHORT (minDivision / minTime)
     static constexpr const char* lengthModeId     = "lengthMode";
     static constexpr const char* maxDivisionId    = "maxDivision";
     static constexpr const char* minDivisionId    = "minDivision";
     static constexpr const char* maxTimeId        = "maxTime";
     static constexpr const char* minTimeId        = "minTime";
-    static constexpr const char* randomId         = "random";
-    static constexpr const char* allowTripletId   = "allowTriplet";
-    static constexpr const char* allowDottedId    = "allowDotted";
-
-    // Enveloppe des slices
-    static constexpr const char* attackId         = "attack";
-    static constexpr const char* decayId          = "decay";
-    static constexpr const char* sustainId        = "sustain";
-    static constexpr const char* releaseId        = "release";
 
     // Pitch des slices
     static constexpr const char* pitchOnId        = "pitchOn";
@@ -42,10 +36,8 @@ public:
     static constexpr const char* gateId           = "gate";
     static constexpr const char* gateDivisionId   = "gateDivision";
     static constexpr const char* gateFeelId       = "gateFeel";
-    static constexpr const char* gateStepsId      = "gateSteps";
     static constexpr const char* gateLengthId     = "gateLength";
     static constexpr const char* gateSmoothId     = "gateSmooth";
-    // + "gateStep1" à "gateStep32" (voir gateStepId)
 
     // Sortie
     static constexpr const char* filterId          = "filter";
@@ -57,12 +49,9 @@ public:
     static constexpr const char* mixId             = "mix";
     static constexpr const char* levelId           = "level";
 
-    static juce::String chanceId (int step)         { return "chance" + juce::String (step + 1); }
-    static juce::String gateStepId (int step)       { return "gateStep" + juce::String (step + 1); }
-
     static constexpr int numSteps = SliceEngine::maxSteps;
     static constexpr float minTimeMs = 0.1f, maxTimeMs = 1000.0f;
-    static constexpr float maxPitch = 24.0f;
+    static constexpr float maxPitch = 48.0f;
     static constexpr float minLevelDb = -24.0f, maxLevelDb = 12.0f;
 
     enum Mode { modeFree = 0, modeSync = 1 };
@@ -126,8 +115,8 @@ public:
     float takeInputPeak() noexcept                          { return inputPeak.exchange (0.0f, std::memory_order_relaxed); }
     float takeOutputPeak() noexcept                         { return outputPeak.exchange (0.0f, std::memory_order_relaxed); }
 
-    /** Longueurs (en noires) entre lesquelles les slices tirent leur boucle en SYNC, selon les réglages. */
-    static int collectDivisions (int longest, int shortest, bool random, bool allowTriplets, bool allowDotted, int* indices);
+    /** Divisions entre lesquelles les slices tirent leur boucle en SYNC (bornes comprises, pointées et triolets aussi). */
+    static int collectDivisions (int from, int to, int* indices);
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -138,18 +127,14 @@ private:
     std::atomic<float>* sliceParam = nullptr;
     std::atomic<float>* stepsParam = nullptr;
     std::atomic<float>* thruParam = nullptr;
-    std::atomic<float>* chanceParams[numSteps] = {};
+    std::atomic<float>* chanceParam = nullptr;
+    std::atomic<float>* durationParam = nullptr;
     std::atomic<float>* lengthModeParam = nullptr;
     std::atomic<float>* maxDivisionParam = nullptr;
     std::atomic<float>* minDivisionParam = nullptr;
     std::atomic<float>* maxTimeParam = nullptr;
     std::atomic<float>* minTimeParam = nullptr;
-    std::atomic<float>* randomParam = nullptr;
-    std::atomic<float>* allowTripletParam = nullptr;
-    std::atomic<float>* allowDottedParam = nullptr;
     std::atomic<float>* attackParam = nullptr;
-    std::atomic<float>* decayParam = nullptr;
-    std::atomic<float>* sustainParam = nullptr;
     std::atomic<float>* releaseParam = nullptr;
     std::atomic<float>* pitchOnParam = nullptr;
     std::atomic<float>* pitchParam = nullptr;
@@ -157,8 +142,6 @@ private:
     std::atomic<float>* gateParam = nullptr;
     std::atomic<float>* gateDivisionParam = nullptr;
     std::atomic<float>* gateFeelParam = nullptr;
-    std::atomic<float>* gateStepsParam = nullptr;
-    std::atomic<float>* gateStepParams[numSteps] = {};
     std::atomic<float>* gateLengthParam = nullptr;
     std::atomic<float>* gateSmoothParam = nullptr;
     std::atomic<float>* filterParam = nullptr;

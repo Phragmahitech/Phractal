@@ -225,51 +225,32 @@ int main (int argc, char* argv[])
 
     using Ids = PhractalAudioProcessor;
 
-    const auto chances = [] (std::initializer_list<int> percents)
-    {
-        Settings s;
-        int step = 0;
-
-        for (const int p : percents)
-            s.push_back ({ Ids::chanceId (step++), (float) p });
-
-        return s;
-    };
-
-    const auto join = [] (Settings a, const Settings& b) { a.insert (a.end(), b.begin(), b.end()); return a; };
-
     // 0. La boucle seule
     render (loop, {}, folder.getChildFile ("00-boucle-seule.wav"), 1);
 
-    // 1. Réglages par défaut, SLICE allumé : 16 pas à 50 %, boucles de 1/16 à 1/64 (triolets et pointées compris).
-    render (loop, { { Ids::sliceId, 1.0f } }, folder.getChildFile ("01-defaut-1-16-a-1-64.wav"), 2);
+    // 1. Réglages par défaut, SLICE allumé : 16 pas, chance 50 %, boucles de 1/16 à 1/64.
+    render (loop, { { Ids::sliceId, 1.0f } }, folder.getChildFile ("01-defaut.wav"), 2);
 
-    // 2. Zaps : micro-boucles de 1/128 à 1/2048, qui deviennent des notes (environ 100 Hz à 1,6 kHz à 190 BPM).
-    render (loop, join ({ { Ids::sliceId, 1.0f }, { Ids::stepsId, 16.0f },
-                          { Ids::maxDivisionId, 21.0f }, { Ids::minDivisionId, 33.0f },
-                          { Ids::releaseId, 25.0f }, { Ids::thruId, 1.0f } },
-                        chances ({ 0, 40, 60, 40, 0, 60, 40, 70, 0, 40, 60, 40, 30, 60, 80, 90 })),
-            folder.getChildFile ("02-zaps-micro-boucles.wav"), 3);
+    // 2. Zaps : micro-boucles de 1/128 à 1/2048 (environ 100 Hz à 1,6 kHz à 190 BPM), chance 60 %, slice sur 60 % du pas.
+    render (loop, { { Ids::sliceId, 1.0f }, { Ids::chanceId, 60.0f }, { Ids::durationId, 60.0f },
+                    { Ids::maxDivisionId, 21.0f }, { Ids::minDivisionId, 33.0f }, { Ids::releaseId, 25.0f } },
+            folder.getChildFile ("02-zaps.wav"), 3);
 
-    // 3. Pitch -12 sur les slices, boucles de 1/32 à 1/256, sans triolets ni pointées.
-    render (loop, { { Ids::sliceId, 1.0f }, { Ids::maxDivisionId, 15.0f }, { Ids::minDivisionId, 24.0f },
-                    { Ids::allowTripletId, 0.0f }, { Ids::allowDottedId, 0.0f },
-                    { Ids::pitchOnId, 1.0f }, { Ids::pitchId, -12.0f } },
-            folder.getChildFile ("03-pitch-moins-12.wav"), 4);
+    // 3. Pitch +36 sur les slices (au-delà de l'ancienne limite de 24), boucles de 1/32 à 1/128.
+    render (loop, { { Ids::sliceId, 1.0f }, { Ids::chanceId, 70.0f }, { Ids::maxDivisionId, 15.0f }, { Ids::minDivisionId, 21.0f },
+                    { Ids::pitchOnId, 1.0f }, { Ids::pitchId, 36.0f } },
+            folder.getChildFile ("03-pitch-plus-36.wav"), 4);
 
-    // 4. Gate x.xx à la double croche + passe-bas résonant, slices longues (1/8 à 1/32).
-    render (loop, { { Ids::sliceId, 1.0f }, { Ids::maxDivisionId, 9.0f }, { Ids::minDivisionId, 15.0f },
+    // 4. Pitch -36 : slices longues tirées vers le grave.
+    render (loop, { { Ids::sliceId, 1.0f }, { Ids::chanceId, 60.0f }, { Ids::maxDivisionId, 9.0f }, { Ids::minDivisionId, 15.0f },
+                    { Ids::pitchOnId, 1.0f }, { Ids::pitchId, -36.0f } },
+            folder.getChildFile ("04-pitch-moins-36.wav"), 5);
+
+    // 5. Le bazar : 32 pas, chance 80 %, 1/8 à 1/4096, durée 50 %, THRU au hasard, gate 1/16 et passe-bas.
+    render (loop, { { Ids::sliceId, 1.0f }, { Ids::stepsId, 32.0f }, { Ids::chanceId, 80.0f }, { Ids::durationId, 50.0f },
+                    { Ids::thruId, 2.0f }, { Ids::maxDivisionId, 9.0f }, { Ids::minDivisionId, 36.0f },
                     { Ids::gateId, 1.0f }, { Ids::gateLengthId, 60.0f }, { Ids::gateSmoothId, 15.0f },
-                    { Ids::filterId, 1.0f }, { Ids::filterTypeId, 2.0f }, { Ids::filterCutoffId, 1800.0f }, { Ids::filterResonanceId, 55.0f } },
-            folder.getChildFile ("04-gate-et-filtre.wav"), 5);
-
-    // 5. Le bazar : 32 pas, 1/8 à 1/4096, pitch +7 libre, THRU au hasard, enveloppe courte.
-    render (loop, join ({ { Ids::sliceId, 1.0f }, { Ids::stepsId, 32.0f }, { Ids::thruId, 2.0f },
-                          { Ids::maxDivisionId, 9.0f }, { Ids::minDivisionId, 36.0f },
-                          { Ids::pitchOnId, 1.0f }, { Ids::pitchModeId, 1.0f }, { Ids::pitchId, 7.0f },
-                          { Ids::decayId, 40.0f }, { Ids::sustainId, 50.0f }, { Ids::releaseId, 20.0f } },
-                        chances ({ 20, 60, 30, 80, 20, 60, 30, 90, 20, 60, 30, 80, 20, 60, 30, 90,
-                                   20, 60, 30, 80, 20, 60, 30, 90, 40, 70, 50, 90, 60, 80, 90, 100 })),
+                    { Ids::filterId, 1.0f }, { Ids::filterTypeId, 2.0f }, { Ids::filterCutoffId, 2500.0f }, { Ids::filterResonanceId, 45.0f } },
             folder.getChildFile ("05-le-bazar.wav"), 6);
 
     return 0;
