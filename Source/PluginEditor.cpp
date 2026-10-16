@@ -561,7 +561,8 @@ void PhractalLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b
 
 //==============================================================================
 PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
-    : audioProcessor (p)
+    : audioProcessor (p),
+      presetBar (p.presets, [this] (float size, bool bold, float tracking) { return lookAndFeel.font (size, bold, tracking); })
 {
     setLookAndFeel (&lookAndFeel);
     setSize (width, height);
@@ -648,6 +649,12 @@ PhractalFacade::PhractalFacade (PhractalAudioProcessor& p)
         selector->attachment->sendInitialUpdate();
 
     modesChanged();
+
+    // Presets et taille de la fenêtre, dans l'en-tête, à gauche du numéro de version
+    addAndMakeVisible (presetBar);
+    presetBar.setBounds (width - 112 - phragma::PresetBar::idealWidth, 26, phragma::PresetBar::idealWidth, 28);
+    presetBar.attachSavePanelTo (*this);
+
     startTimerHz (30);
 }
 
@@ -1371,11 +1378,14 @@ PhractalAudioProcessorEditor::PhractalAudioProcessorEditor (PhractalAudioProcess
     // Taille gardée avec le projet (lue avant de régler les limites : les régler redimensionne déjà la fenêtre).
     const int savedWidth = (int) audioProcessor.apvts.state.getProperty ("editorWidth", PhractalFacade::width);
 
-    // Fenêtre redimensionnable de 60 % à 150 %, proportions gardées.
+    // Fenêtre redimensionnable de 60 % à 150 %, proportions gardées (coin en bas à droite ou menu de taille).
     setResizable (true, true);
     setResizeLimits (juce::roundToInt (PhractalFacade::width * 0.6), juce::roundToInt (PhractalFacade::height * 0.6),
                      juce::roundToInt (PhractalFacade::width * 1.5), juce::roundToInt (PhractalFacade::height * 1.5));
     getConstrainer()->setFixedAspectRatio ((double) PhractalFacade::width / (double) PhractalFacade::height);
+
+    facade.getPresetBar().getScale = [this] { return getUiScale(); };
+    facade.getPresetBar().setScale = [this] (float scale) { setUiScale (scale); };
 
     const int shownWidth = juce::jlimit (juce::roundToInt (PhractalFacade::width * 0.6), juce::roundToInt (PhractalFacade::width * 1.5), savedWidth);
     setSize (shownWidth, juce::roundToInt ((double) shownWidth * PhractalFacade::height / PhractalFacade::width));
@@ -1385,10 +1395,16 @@ PhractalAudioProcessorEditor::PhractalAudioProcessorEditor (PhractalAudioProcess
 
 PhractalAudioProcessorEditor::~PhractalAudioProcessorEditor() = default;
 
+void PhractalAudioProcessorEditor::setUiScale (float scale)
+{
+    scale = juce::jlimit (0.6f, 1.5f, scale);
+    setSize (juce::roundToInt ((float) PhractalFacade::width * scale), juce::roundToInt ((float) PhractalFacade::height * scale));
+}
+
 void PhractalAudioProcessorEditor::resized()
 {
-    const float scale = (float) getWidth() / (float) PhractalFacade::width;
-    facade.setTransform (juce::AffineTransform::scale (scale));
+    facade.setTransform (juce::AffineTransform::scale (getUiScale()));
+    facade.getPresetBar().refresh();
 
     if (sized)
         audioProcessor.apvts.state.setProperty ("editorWidth", getWidth(), nullptr);

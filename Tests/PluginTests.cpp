@@ -557,6 +557,8 @@ static void testEditor (const juce::File& outputDir)
     editor.reset();
 }
 
+#include "PresetTests.h"
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI gui;
@@ -568,6 +570,8 @@ int main (int argc, char* argv[])
     testPitchAndMicroLoops();
     testStateAndBypass();
     testEditor (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (juce::String::fromUTF8 (argv[1])) : juce::File());
+    testPresetsAndWindowSize<PhractalAudioProcessor, PhractalAudioProcessorEditor, PhractalFacade> ({},
+        argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (juce::String::fromUTF8 (argv[1])) : juce::File());
 
     std::cout << (failures == 0 ? "TOUS LES TESTS PASSENT" : juce::String (failures) + " ECHEC(S)") << std::endl;
     return failures == 0 ? 0 : 1;

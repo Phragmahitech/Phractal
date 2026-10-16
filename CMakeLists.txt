@@ -17,7 +17,7 @@ endif()
 # Windows : runtime C++ lié en statique -> aucun "Visual C++ Redistributable" à installer
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(Phractal VERSION 0.2.0 LANGUAGES C CXX)
+project(Phractal VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

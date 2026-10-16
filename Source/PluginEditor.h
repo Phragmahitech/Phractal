@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "PresetBar.h"
 
 /**
     Design clair, celui de Phragments et Phibres : plaques à pans coupés, gris
@@ -85,6 +86,8 @@ public:
     static constexpr int width = 1218, height = 642;
 
     explicit PhractalFacade (PhractalAudioProcessor&);
+
+    phragma::PresetBar& getPresetBar() noexcept     { return presetBar; }
     ~PhractalFacade() override;
 
     void paint (juce::Graphics&) override;
@@ -148,6 +151,9 @@ private:
     std::vector<std::unique_ptr<juce::ParameterAttachment>> stateWatchers;
     std::unique_ptr<juce::ParameterAttachment> pitchAttachment;
 
+    // Barre des presets et de la taille (en-tête) : déclarée en dernier, détruite en premier.
+    phragma::PresetBar presetBar;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PhractalFacade)
 };
 
@@ -162,6 +168,10 @@ public:
     void resized() override;
 
     PhractalFacade& getFacade() noexcept                { return facade; }
+
+    /** Taille de la fenêtre (1 = 100 %). */
+    float getUiScale() const                            { return (float) getWidth() / (float) PhractalFacade::width; }
+    void setUiScale (float scale);
 
 private:
     PhractalAudioProcessor& audioProcessor;

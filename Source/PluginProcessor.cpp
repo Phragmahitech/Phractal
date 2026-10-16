@@ -287,8 +287,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhractalAudioProcessor::crea
 PhractalAudioProcessor::PhractalAudioProcessor()
     : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true)
                                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "Phractal", createParameterLayout())
+      apvts (*this, nullptr, "Phractal", createParameterLayout()),
+      presets (apvts, "Phractal", ".phcpreset", PresetLibrary::defaultsOnly (*this, {}), {}, "UNTITLED")
 {
+    presets.restoreFromState();   // projet neuf : DEFAULT
     const auto raw = [this] (const juce::String& id) { return apvts.getRawParameterValue (id); };
 
     sliceParam           = raw (sliceId);
@@ -542,7 +544,10 @@ void PhractalAudioProcessor::setStateInformation (const void* data, int sizeInBy
     const auto xml = getXmlFromBinary (data, sizeInBytes);
 
     if (xml != nullptr && xml->hasTagName (apvts.state.getType()))
+    {
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        presets.restoreFromState();
+    }
 }
 
 //==============================================================================

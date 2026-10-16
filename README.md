@@ -36,9 +36,24 @@ Phractal se pose en insert. La mesure est découpée en 1 à 32 pas (GRID). À c
 - **FILTER**
   - Passe-haut, passe-bande ou passe-bas, 12 ou 24 dB par octave (24 par défaut), avec résonance, sur tout ce qui sort.
 
-L'interface se redimensionne de 60 % à 150 % par le coin en bas à droite. La taille choisie est gardée avec le projet.
+L'interface se redimensionne de 60 % à 150 % (coin en bas à droite ou bouton de taille dans l'en-tête). La taille choisie est gardée avec le projet.
 
 Les projets enregistrés avec la v0.1 ne retrouvent pas leurs réglages (les paramètres ont changé).
+
+## Presets et taille de la fenêtre
+
+En haut de la façade : `‹  NOM ▾  ›  SAVE  100 %`.
+
+- **‹ ›** : preset précédent / suivant (DEFAULT, puis les presets enregistrés, par ordre alphabétique, en boucle).
+- **Nom** : menu des presets, SAVE AS…, DELETE (le fichier part à la corbeille), SHOW PRESETS FOLDER. Une étoile `*` signale un preset modifié.
+- **SAVE** : panneau dans la façade ; Entrée = enregistrer, Échap = annuler. Si le nom existe, le bouton devient REPLACE.
+- **100 %** : taille de la fenêtre (60, 75, 100, 125, 150 %). On peut aussi tirer le coin en bas à droite. La taille est gardée avec le projet.
+
+Les presets sont des fichiers `.phcpreset` (XML, valeurs en unités réelles) :
+- macOS : `~/Library/Audio/Presets/Phragma/Phractal/`
+- Windows : `%APPDATA%\Phragma\Phractal\Presets\`
+
+Un preset garde tous les paramètres. Le projet du DAW garde le nom du preset en cours. Un paramètre absent du fichier revient à sa valeur par défaut ; une valeur hors plage est bornée ; un fichier illisible est refusé sans rien changer.
 
 ## Trajet du son
 
